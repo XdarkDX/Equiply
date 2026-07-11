@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Equiply | Inventar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { ozean: { leicht: '#e0f2fe', normal: '#0284c7', tief: '#0369a1' } } } }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .modal-glass { backdrop-filter: blur(8px); background-color: rgba(15, 23, 42, 0.6); }
+        .input-field { width: 100%; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; background-color: #f8fafc; transition: all 0.2s; outline: none; }
+        .input-field:focus { background-color: #ffffff; border-color: #0284c7; box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2); }
+        .input-field:disabled, .input-field[readonly] { background-color: #f1f5f9; color: #64748b; cursor: not-allowed; border-color: #e2e8f0; box-shadow: none; }
+        
+        .label { display: block; font-size: 0.75rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen">
+
+    <div id="custom-alert-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[300] transition-opacity">
+        <div class="bg-white p-6 md:p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center transform scale-100">
+            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-ozean-leicht mb-4">
+                <svg class="h-6 w-6 text-ozean-normal" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+            <h3 class="text-lg font-extrabold text-slate-900 mb-2">Hinweis</h3>
+            <p id="custom-alert-message" class="text-sm text-slate-500 mb-6"></p>
+            <button id="custom-alert-ok" class="w-full bg-ozean-normal hover:bg-ozean-tief text-white font-bold py-3 rounded-xl transition-all shadow-md">OK</button>
+        </div>
+    </div>
+
+    <div id="custom-confirm-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[300] transition-opacity">
+        <div class="bg-white p-6 md:p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center">
+            <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mb-4">
+                <svg class="h-6 w-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <p id="custom-confirm-message" class="text-sm font-medium text-slate-800 mb-6"></p>
+            <div class="flex gap-3">
+                <button id="custom-confirm-no" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl transition-all">Abbrechen</button>
+                <button id="custom-confirm-yes" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-md transition-all">Ja, sicher</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading-screen" class="fixed inset-0 bg-white z-[200] flex justify-center items-center">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-ozean-normal"></div>
+    </div>
+
+    <div id="auth-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[100] transition-opacity duration-300">
+        <div class="bg-white p-5 md:p-8 rounded-2xl w-full max-w-md shadow-2xl transform transition-all duration-300 max-h-[95vh] overflow-y-auto">
+            <h2 class="text-3xl md:text-4xl font-extrabold mb-6 md:mb-8 text-ozean-tief text-center tracking-tight cursor-default select-none" onclick="triggerSecretLogin()">Equiply.</h2>
+            
+            <div id="auth-tabs" class="flex mb-6 border-b-2 border-slate-100">
+                <button id="tab-login" onclick="switchAuthTab('login')" class="flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all">Einloggen</button>
+                <button id="tab-register" onclick="switchAuthTab('register')" class="flex-1 pb-3 font-bold text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition-all">Neuer Verein</button>
+            </div>
+
+            <div id="auth-error" class="hidden bg-red-50 text-red-600 border border-red-100 p-3 rounded-xl mb-4 text-sm font-medium"></div>
+
+            <div id="form-login" class="space-y-4">
+                <div><label class="label">Benutzername</label><input type="text" id="login-user" class="input-field"></div>
+                <div><label class="label">Passwort</label><input type="password" id="login-pass" class="input-field"></div>
+                <button onclick="login()" class="w-full bg-ozean-normal hover:bg-ozean-tief text-white py-3.5 rounded-xl font-bold shadow-lg shadow-ozean-normal/30 hover:-translate-y-0.5 transition-all mt-4">Anmelden</button>
+            </div>
+
+            <div id="form-register" class="hidden space-y-4">
+                <div><label class="label">Vereinsname</label><input type="text" id="reg-verein" class="input-field"></div>
+                <div><label class="label">E-Mail Adresse</label><input type="email" id="reg-email" class="input-field"></div>
+                <div><label class="label">Benutzername</label><input type="text" id="reg-user" class="input-field"></div>
+                <div><label class="label">Passwort</label><input type="password" id="reg-pass" class="input-field"></div>
+                <button onclick="register()" class="w-full bg-slate-800 hover:bg-slate-900 text-white py-3.5 rounded-xl font-bold shadow-lg hover:-translate-y-0.5 transition-all mt-4">Verein registrieren</button>
+            </div>
+            
+            <div id="form-system-login" class="hidden space-y-4">
+                <div class="bg-slate-900 text-white text-xs p-3 rounded-lg border border-slate-700 font-mono mb-4 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z" clip-rule="evenodd"></path></svg>
+                    RESTRICTED SYSTEM ACCESS
+                </div>
+                <div><label class="label">System User</label><input type="text" id="sys-user" class="input-field font-mono"></div>
+                <div><label class="label">System Secret</label><input type="password" id="sys-pass" class="input-field font-mono"></div>
+                <button onclick="systemLogin()" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-xl font-bold shadow-lg hover:-translate-y-0.5 transition-all mt-2">SysAdmin Login</button>
+                <button onclick="switchAuthTab('login')" class="w-full text-sm font-bold text-slate-400 hover:text-slate-600 mt-2">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-app-view" class="hidden flex-col min-h-screen">
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 md:px-8 h-16 md:h-20 flex items-center justify-between">
+                <div class="flex items-center gap-2 md:gap-3">
+                    <div class="bg-ozean-normal text-white p-2 md:p-2.5 rounded-xl shadow-inner"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div>
+                    <h1 class="text-xl md:text-2xl font-extrabold text-slate-800 tracking-tight">Equiply</h1>
+                </div>
+                <div class="flex items-center gap-1 md:gap-3">
+                    <button id="admin-btn" onclick="openAdminModal()" class="hidden text-xs md:text-sm font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 md:px-4 py-2 rounded-xl transition-all">Team & Rollen</button>
+                    <div class="h-6 w-px bg-slate-200 mx-1 hidden md:block"></div>
+                    <button onclick="openChangePwModal()" class="text-xs md:text-sm font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-50 px-2 md:px-3 py-2 rounded-lg transition-all">Profil</button>
+                    <button onclick="logout()" class="text-xs md:text-sm font-bold text-slate-400 hover:text-red-500 hover:bg-red-50 px-2 md:px-3 py-2 rounded-lg transition-all">Logout</button>
+                    <button id="add-item-btn" onclick="openModal('add-modal')" class="hidden ml-1 md:ml-2 bg-ozean-normal hover:bg-ozean-tief text-white text-xs md:text-sm px-3 md:px-5 py-2.5 rounded-xl font-bold shadow-md shadow-ozean-normal/20 hover:-translate-y-0.5 transition-all flex items-center gap-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg><span class="hidden sm:inline">Hinzufügen</span></button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-8 flex-1 w-full">
+            <div class="flex gap-2 md:gap-3 mb-6 md:mb-8 overflow-x-auto pb-2 scrollbar-hide" id="filter-container">
+                <button onclick="setFilter('Alle')" class="filter-btn active-filter px-4 md:px-5 py-2 md:py-2.5 bg-ozean-normal text-white rounded-xl font-bold shadow-md whitespace-nowrap transition-all text-sm md:text-base">Alle</button>
+                <button onclick="setFilter('Flaschen')" class="filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base">Flaschen</button>
+                <button onclick="setFilter('Atemregler')" class="filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base">Atemregler</button>
+                <button onclick="setFilter('Jackets')" class="filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base">Jackets</button>
+                <button onclick="setFilter('Blei')" class="filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base">Blei</button>
+                <button onclick="setFilter('Sonstiges')" class="filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base">Sonstiges</button>
+            </div>
+            <div id="inventory-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6"></div>
+        </main>
+    </div>
+
+    <div id="superadmin-view" class="hidden flex-col min-h-screen bg-slate-100">
+        <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-xl">
+            <div class="max-w-7xl mx-auto px-4 md:px-8 h-16 md:h-20 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="bg-red-600 text-white p-2 rounded-xl shadow-inner"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z" clip-rule="evenodd"></path></svg></div>
+                    <div><h1 class="text-xl md:text-2xl font-extrabold text-white tracking-tight">Equiply System</h1><span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Global Dashboard</span></div>
+                </div>
+                <button onclick="logout()" class="text-xs md:text-sm font-bold text-slate-300 hover:text-white hover:bg-slate-800 px-3 py-2 rounded-lg transition-all">Logout</button>
+            </div>
+        </header>
+        <main class="max-w-7xl mx-auto px-4 md:px-8 py-8 flex-1 w-full" id="superadmin-content"></main>
+    </div>
+
+    <div id="admin-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-2xl w-full max-w-4xl p-5 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="font-extrabold text-xl md:text-2xl text-slate-800">Team & Rollen</h2>
+                <button onclick="closeModal('admin-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-500 p-2 rounded-full font-bold transition-all">✕</button>
+            </div>
+            
+            <div class="flex border-b-2 border-slate-100 mb-6">
+                <button id="tab-members" onclick="switchAdminTab('members')" class="flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all">Mitglieder</button>
+                <button id="tab-roles" onclick="switchAdminTab('roles')" class="flex-1 pb-3 font-bold text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition-all">Rollen</button>
+            </div>
+
+            <div id="admin-error" class="hidden text-sm bg-red-50 text-red-600 p-3 rounded-xl mb-3 font-medium"></div>
+
+            <div id="view-members">
+                <div class="border border-slate-100 rounded-xl bg-slate-50 mb-8 p-1">
+                    <div class="grid grid-cols-12 gap-2 p-3 text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                        <div class="col-span-5 md:col-span-5">Benutzer</div>
+                        <div class="col-span-5 md:col-span-5">E-Mail & Rolle</div>
+                        <div class="col-span-2 text-right">Aktion</div>
+                    </div>
+                    <div id="user-list" class="max-h-60 overflow-y-auto divide-y divide-slate-100"></div>
+                </div>
+
+                <h3 class="font-bold text-sm text-slate-400 uppercase tracking-wider mb-3">Neues Mitglied hinzufügen</h3>
+                <div class="flex flex-col md:flex-row gap-3 mb-4">
+                    <input type="text" id="new-user-name" placeholder="Name" class="input-field flex-1">
+                    <input type="email" id="new-user-email" placeholder="E-Mail" class="input-field flex-1">
+                    <input type="password" id="new-user-pass" placeholder="Passwort" class="input-field flex-1">
+                    <select id="new-user-role" class="input-field flex-1 font-bold"></select>
+                </div>
+                <button onclick="createSubUser()" class="w-full bg-purple-600 hover:bg-purple-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg shadow-purple-500/20 transition-all">Mitglied anlegen</button>
+            </div>
+
+            <div id="view-roles" class="hidden">
+                <div class="border border-slate-100 rounded-xl bg-slate-50 mb-8 p-1">
+                    <div class="grid grid-cols-12 gap-2 p-3 text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                        <div class="col-span-4">Rollen-Name</div>
+                        <div class="col-span-6">Berechtigungen</div>
+                        <div class="col-span-2 text-right">Aktion</div>
+                    </div>
+                    <div id="roles-list" class="max-h-60 overflow-y-auto divide-y divide-slate-100"></div>
+                </div>
+
+                <h3 class="font-bold text-sm text-slate-400 uppercase tracking-wider mb-3">Neue Rolle erstellen</h3>
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4 flex flex-col md:flex-row gap-4 items-center">
+                    <input type="text" id="new-role-name" placeholder="Name der Rolle (z.B. Gerätewart)" class="input-field w-full md:w-1/3">
+                    <div class="flex flex-wrap gap-4 flex-1">
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" id="role-perm-users" class="w-4 h-4 rounded"> Team verwalten</label>
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" id="role-perm-items" class="w-4 h-4 rounded"> Inventar verwalten</label>
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" id="role-perm-borrow" class="w-4 h-4 rounded" checked> Ausleihen / Rückgabe</label>
+                    </div>
+                </div>
+                <button onclick="createRole()" class="w-full bg-slate-800 hover:bg-slate-900 text-white px-5 py-3 rounded-xl font-bold transition-all shadow-md">Rolle speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-user-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[60]">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl">
+            <h3 class="font-extrabold text-xl mb-6">Mitglied bearbeiten</h3>
+            <input type="hidden" id="edit-user-id">
+            <label class="label">Benutzername</label><input type="text" id="edit-user-name" class="input-field mb-4">
+            <label class="label">E-Mail Adresse</label><input type="email" id="edit-user-email" class="input-field mb-4">
+            <label class="label">Neues Passwort (Optional)</label><input type="password" id="edit-user-pass" placeholder="Leer = Keine Änderung" class="input-field mb-6">
+            
+            <div class="relative">
+                <label class="label">Vereins-Rolle</label>
+                <select id="edit-user-role" class="input-field mb-6 font-bold"></select>
+                <div id="edit-self-warning" class="hidden absolute inset-0 bg-slate-50/70 backdrop-blur-[1px] flex items-center justify-center rounded-xl z-10 p-4">
+                    <span class="bg-white text-slate-600 text-xs font-bold px-3 py-2 rounded-lg shadow-sm border border-slate-200">Rechte gesperrt (Selbstschutz)</span>
+                </div>
+            </div>
+
+            <div class="flex gap-3">
+                <button onclick="closeModal('edit-user-modal')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl font-bold transition-all">Abbrechen</button>
+                <button onclick="saveEditedUser()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-xl font-bold shadow-lg shadow-purple-500/20 transition-all">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="item-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-2xl w-full max-w-md p-5 md:p-8 shadow-2xl">
+            <h2 id="item-modal-title" class="font-extrabold text-xl mb-6">Inventar</h2>
+            <input type="hidden" id="item-id">
+            <div class="space-y-4 mb-8">
+                <div><label class="label">Bezeichnung</label><input type="text" id="item-name" class="input-field"></div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div id="id-field-container"><label class="label">System-ID</label><input type="text" id="item-device-id" class="input-field font-mono bg-slate-100 text-slate-500 cursor-not-allowed" readonly></div>
+                    <div id="category-field-container"><label class="label">Kategorie</label>
+                        <select id="item-category" class="input-field"><option value="Flaschen">Flaschen</option><option value="Atemregler">Atemregler</option><option value="Jackets">Jackets</option><option value="Blei">Blei</option><option value="Sonstiges">Sonstiges</option></select>
+                    </div>
+                </div>
+                <div><label class="label">Zustand</label><select id="item-condition" class="input-field"><option value="Gut">Einwandfrei</option><option value="Gebrauchsspuren">Leichte Mängel</option><option value="Reparaturbedürftig">Defekt</option></select></div>
+                <div><label class="label">TÜV / Wartung</label><input type="date" id="item-tuev" class="input-field"></div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="closeModal('item-modal')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl font-bold">Abbrechen</button>
+                <button onclick="saveItem()" class="flex-1 bg-ozean-normal text-white py-3 rounded-xl font-bold shadow-lg">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="action-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl">
+            <h2 id="action-title" class="font-extrabold text-xl mb-6">Aktion</h2>
+            <input type="hidden" id="action-id">
+            <input type="hidden" id="action-type">
+            <div id="action-borrow-fields" class="hidden space-y-4 mb-8">
+                <div><label class="label">Ausleihen an</label><input type="text" id="action-borrower" class="input-field"></div>
+                <div><label class="label">Geplantes Rückgabedatum</label><input type="date" id="action-date" class="input-field"></div>
+            </div>
+            <div id="action-return-fields" class="hidden space-y-4 mb-8">
+                <div><label class="label">Aktueller Zustand</label>
+                    <select id="action-condition" class="input-field"><option value="Gut">Einwandfrei</option><option value="Gebrauchsspuren">Leichte Mängel</option><option value="Reparaturbedürftig">Defekt</option></select>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="closeModal('action-modal')" class="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold">Abbrechen</button>
+                <button onclick="confirmAction()" class="flex-1 bg-ozean-normal text-white py-3 rounded-xl font-bold shadow-lg">Bestätigen</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="renew-tuev-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl">
+            <h2 class="font-extrabold text-xl mb-2 text-red-600">TÜV erneuern</h2>
+            <input type="hidden" id="renew-tuev-id">
+            <div class="space-y-4 mb-8"><div><label class="label">Neues TÜV-Datum</label><input type="date" id="renew-tuev-date" class="input-field"></div></div>
+            <div class="flex gap-3">
+                <button onclick="closeModal('renew-tuev-modal')" class="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold">Abbrechen</button>
+                <button onclick="confirmRenewTuev()" class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold shadow-lg">Speichern</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="change-pw-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[70]">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl"><h3 class="font-extrabold text-xl mb-6">Passwort ändern</h3>
+            <div id="change-pw-error" class="hidden text-sm bg-red-50 text-red-600 p-3 rounded-xl mb-4 font-medium"></div><div id="change-pw-success" class="hidden text-sm bg-green-50 text-green-700 p-3 rounded-xl mb-4 font-medium"></div>
+            <input type="password" id="self-old-pw" placeholder="Altes PW" class="input-field mb-4"><input type="password" id="self-new-pw" placeholder="Neues PW" class="input-field mb-6">
+            <div class="flex gap-3"><button onclick="closeModal('change-pw-modal')" class="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold">Abbrechen</button><button onclick="saveNewOwnPassword()" class="flex-1 bg-ozean-normal text-white py-3 rounded-xl font-bold">Speichern</button></div>
+        </div>
+    </div>
+
+    <template id="icon-edit"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></template>
+    <template id="icon-trash"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></template>
+    <template id="icon-check"><svg class="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg></template>
+    <template id="icon-cross"><svg class="w-3 h-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg></template>
+
+    <script>
+        const API_URL = '/api';
+        
+        let inventory = [];
+        let currentFilter = 'Alle';
+        let vereinUsers = []; 
+        let vereinRollen = []; 
+        let userPermissions = { can_manage_users: false, can_manage_items: false, can_borrow_return: false };
+        let currentUserRole = 'user';
+
+        // -----------------------------------------------------
+        // NEUE CUSTOM POP-UP LOGIK
+        // -----------------------------------------------------
+        function customAlert(message) {
+            return new Promise((resolve) => {
+                document.getElementById('custom-alert-message').innerText = message;
+                document.getElementById('custom-alert-modal').classList.remove('hidden');
+                document.getElementById('custom-alert-ok').onclick = () => {
+                    document.getElementById('custom-alert-modal').classList.add('hidden');
+                    resolve();
+                };
+            });
+        }
+
+        function customConfirm(message) {
+            return new Promise((resolve) => {
+                document.getElementById('custom-confirm-message').innerText = message;
+                document.getElementById('custom-confirm-modal').classList.remove('hidden');
+                document.getElementById('custom-confirm-yes').onclick = () => {
+                    document.getElementById('custom-confirm-modal').classList.add('hidden');
+                    resolve(true);
+                };
+                document.getElementById('custom-confirm-no').onclick = () => {
+                    document.getElementById('custom-confirm-modal').classList.add('hidden');
+                    resolve(false);
+                };
+            });
+        }
+        // -----------------------------------------------------
+
+        let secretClicks = 0;
+        let secretTimer;
+        function triggerSecretLogin() {
+            secretClicks++;
+            clearTimeout(secretTimer);
+            secretTimer = setTimeout(() => secretClicks = 0, 1000);
+            if (secretClicks >= 5) {
+                secretClicks = 0;
+                document.getElementById('auth-tabs').classList.add('hidden');
+                document.getElementById('form-login').classList.add('hidden');
+                document.getElementById('form-register').classList.add('hidden');
+                document.getElementById('form-system-login').classList.remove('hidden');
+            }
+        }
+
+        async function systemLogin() {
+            const u = document.getElementById('sys-user').value, p = document.getElementById('sys-pass').value;
+            try {
+                const res = await fetch(`${API_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+                const data = await res.json();
+                if(!res.ok) throw new Error(data.error);
+                sessionStorage.setItem('equiply_token', data.token);
+                checkAuth(); 
+            } catch(e) { await customAlert("SYSTEM ACCESS DENIED"); }
+        }
+
+        function switchAuthTab(tab) {
+            document.getElementById('auth-error').classList.add('hidden');
+            document.getElementById('auth-tabs').classList.remove('hidden');
+            document.getElementById('form-system-login').classList.add('hidden');
+            const loginTab = document.getElementById('tab-login'), regTab = document.getElementById('tab-register');
+            if(tab === 'login') {
+                document.getElementById('form-login').classList.remove('hidden'); document.getElementById('form-register').classList.add('hidden');
+                loginTab.className = "flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all"; regTab.className = "flex-1 pb-3 font-bold text-slate-400 border-b-2 border-transparent transition-all";
+            } else {
+                document.getElementById('form-register').classList.remove('hidden'); document.getElementById('form-login').classList.add('hidden');
+                regTab.className = "flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all"; loginTab.className = "flex-1 pb-3 font-bold text-slate-400 border-b-2 border-transparent transition-all";
+            }
+        }
+
+        function showError(msg) { const e = document.getElementById('auth-error'); e.innerText = msg; e.classList.remove('hidden'); }
+
+        async function register() {
+            const vereinName = document.getElementById('reg-verein').value, email = document.getElementById('reg-email').value, username = document.getElementById('reg-user').value, password = document.getElementById('reg-pass').value;
+            if(!vereinName || !email || !username || !password) return showError("Felder unvollständig.");
+            const res = await fetch(`${API_URL}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vereinName, username, email, password }) });
+            const data = await res.json();
+            if(!res.ok) showError(data.error); else { sessionStorage.setItem('equiply_token', data.token); checkAuth(); }
+        }
+
+        async function login() {
+            const username = document.getElementById('login-user').value, password = document.getElementById('login-pass').value;
+            if(!username || !password) return showError("Felder unvollständig.");
+            const res = await fetch(`${API_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+            const data = await res.json();
+            if(!res.ok) showError(data.error); else { sessionStorage.setItem('equiply_token', data.token); checkAuth(); }
+        }
+
+        async function logout() {
+            const confirmed = await customConfirm("Möchtest du dich wirklich ausloggen?");
+            if(confirmed) {
+                sessionStorage.clear();
+                location.reload(); 
+            }
+        }
+
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const token = sessionStorage.getItem('equiply_token');
+            const options = { method, headers: { 'Authorization': `Bearer ${token}` } };
+            if(body) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+            const res = await fetch(`${API_URL}${endpoint}`, options);
+            const resData = await res.json();
+            if(res.status === 401 || res.status === 403) { 
+                if(endpoint !== '/users/me/password') { 
+                    await customAlert(resData.error || "Sitzung abgelaufen oder blockiert."); 
+                    if(res.status === 401) { sessionStorage.clear(); location.reload(); }
+                    throw new Error("Sitzung abgelaufen"); 
+                }
+            }
+            if (!res.ok) throw new Error(resData.error || "Fehler");
+            return resData;
+        }
+
+        async function checkAuth() {
+            const token = sessionStorage.getItem('equiply_token');
+            const loadScreen = document.getElementById('loading-screen');
+            loadScreen.classList.remove('hidden');
+
+            if (!token) {
+                loadScreen.classList.add('hidden');
+                document.getElementById('auth-modal').classList.remove('hidden');
+                switchAuthTab('login');
+                return;
+            }
+
+            try {
+                const me = await apiCall('/me');
+                currentUserRole = me.role;
+                userPermissions = me.permissions;
+
+                document.getElementById('auth-modal').classList.add('hidden');
+                
+                if(currentUserRole === 'superadmin') {
+                    document.getElementById('main-app-view').classList.add('hidden');
+                    document.getElementById('superadmin-view').classList.remove('hidden');
+                    loadSuperAdminData();
+                } else {
+                    document.getElementById('superadmin-view').classList.add('hidden');
+                    document.getElementById('main-app-view').classList.remove('hidden');
+                    
+                    document.getElementById('admin-btn').classList.toggle('hidden', !userPermissions.can_manage_users);
+                    document.getElementById('add-item-btn').classList.toggle('hidden', !userPermissions.can_manage_items);
+                    loadInventory();
+                }
+            } catch(e) { console.log(e); }
+            
+            setTimeout(() => loadScreen.classList.add('hidden'), 300);
+        }
+
+        function getCurrentUserId() {
+            const token = sessionStorage.getItem('equiply_token');
+            if(!token) return null;
+            try { return JSON.parse(atob(token.split('.')[1])).id; } catch(e) { return null; }
+        }
+
+        // --- SUPERADMIN BEREICH ---
+        async function loadSuperAdminData() {
+            const content = document.getElementById('superadmin-content');
+            try {
+                const data = await apiCall('/system-overview');
+                let html = '<div class="space-y-6">';
+                data.vereine.forEach(v => {
+                    html += `<div class="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-lg shadow-slate-200/50 relative overflow-hidden"><div class="absolute top-0 left-0 w-full h-1.5 bg-slate-800"></div><div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-100 pb-4 mb-5 gap-4"><div><h4 class="text-xl font-extrabold text-slate-800 tracking-tight">${v.name}</h4><span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono mt-1 inline-block">ID: ${v.id}</span></div><button onclick="sysDeleteVerein(${v.id}, '${v.name}')" class="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-all border border-red-200 hover:border-red-600 shadow-sm flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> Kompletten Verein löschen</button></div></div>`;
+                });
+                content.innerHTML = html + '</div>';
+            } catch (e) { content.innerHTML = `Error: ${e.message}`; }
+        }
+        
+        async function sysDeleteVerein(id, name) {
+            const confirmed = await customConfirm(`Möchtest du den Verein "${name}" wirklich komplett löschen?\nDas löscht alle Daten unwiderruflich!`);
+            if(!confirmed) return;
+            try { await apiCall(`/vereine/${id}`, 'DELETE'); loadSuperAdminData(); } catch(e) { await customAlert(e.message); }
+        }
+
+        // --- PROFIL ---
+        function openChangePwModal() { document.getElementById('change-pw-error').classList.add('hidden'); document.getElementById('change-pw-success').classList.add('hidden'); openModal('change-pw-modal'); }
+        async function saveNewOwnPassword() {
+            const oldPassword = document.getElementById('self-old-pw').value, newPassword = document.getElementById('self-new-pw').value;
+            const errDiv = document.getElementById('change-pw-error'), sucDiv = document.getElementById('change-pw-success');
+            errDiv.classList.add('hidden'); sucDiv.classList.add('hidden');
+            if(!oldPassword || !newPassword) { errDiv.innerText = "Fehlende Eingaben."; return errDiv.classList.remove('hidden'); }
+            try { await apiCall('/users/me/password', 'PUT', { oldPassword, newPassword }); sucDiv.innerText = "Passwort aktualisiert!"; sucDiv.classList.remove('hidden'); setTimeout(() => closeModal('change-pw-modal'), 1200); } catch (e) { errDiv.innerText = e.message; errDiv.classList.remove('hidden'); }
+        }
+
+        // --- ADMIN TEAM & ROLLEN ---
+        function switchAdminTab(tab) {
+            document.getElementById('admin-error').classList.add('hidden');
+            const tabM = document.getElementById('tab-members'), tabR = document.getElementById('tab-roles');
+            const viewM = document.getElementById('view-members'), viewR = document.getElementById('view-roles');
+            
+            if(tab === 'members') {
+                viewM.classList.remove('hidden'); viewR.classList.add('hidden');
+                tabM.className = "flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all";
+                tabR.className = "flex-1 pb-3 font-bold text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition-all";
+            } else {
+                viewR.classList.remove('hidden'); viewM.classList.add('hidden');
+                tabR.className = "flex-1 pb-3 font-bold text-ozean-normal border-b-2 border-ozean-normal transition-all";
+                tabM.className = "flex-1 pb-3 font-bold text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition-all";
+            }
+        }
+
+        async function openAdminModal() { openModal('admin-modal'); switchAdminTab('members'); loadUsersAndRoles(); }
+        
+        async function loadUsersAndRoles() {
+            try {
+                vereinRollen = await apiCall('/rollen');
+                vereinUsers = await apiCall('/users');
+                renderRoles(); renderUsers(); updateRoleSelects();
+            } catch(e) { closeModal('admin-modal'); await customAlert(e.message); }
+        }
+
+        function renderRoles() {
+            const list = document.getElementById('roles-list');
+            const svgTrash = document.getElementById('icon-trash').innerHTML;
+            const check = document.getElementById('icon-check').innerHTML;
+            const cross = document.getElementById('icon-cross').innerHTML;
+
+            list.innerHTML = vereinRollen.map(r => {
+                let p = { can_manage_users: false, can_manage_items: false, can_borrow_return: false };
+                try { p = JSON.parse(r.permissions); } catch(e){}
+                const p1 = p.can_manage_users ? check : cross;
+                const p2 = p.can_manage_items ? check : cross;
+                const p3 = p.can_borrow_return ? check : cross;
+
+                return `<div class="flex justify-between items-center p-3 hover:bg-slate-50 transition-all"><div class="font-bold text-sm text-slate-800 w-1/3 truncate">${r.name}</div><div class="flex gap-4 text-xs text-slate-500 w-1/2"><span class="flex items-center gap-1">${p1} Team</span><span class="flex items-center gap-1">${p2} Inv.</span><span class="flex items-center gap-1">${p3} Ausl.</span></div><div class="w-1/6 text-right"><button onclick="deleteRole(${r.id})" class="text-slate-400 hover:text-red-500 bg-white p-1.5 rounded-lg border border-slate-100">${svgTrash}</button></div></div>`;
+            }).join('');
+        }
+
+        function updateRoleSelects() {
+            let options = '<option value="">Keine Rolle (Nur Ansicht)</option>';
+            vereinRollen.forEach(r => options += `<option value="${r.id}">${r.name}</option>`);
+            document.getElementById('new-user-role').innerHTML = options;
+            let editOptions = '<option value="admin">Admin (Alle Rechte)</option>' + options;
+            document.getElementById('edit-user-role').innerHTML = editOptions;
+        }
+
+        function renderUsers() {
+            const list = document.getElementById('user-list');
+            const svgEdit = document.getElementById('icon-edit').innerHTML;
+            const svgTrash = document.getElementById('icon-trash').innerHTML;
+            
+            list.innerHTML = vereinUsers.map(u => {
+                const isAd = (u.role === 'admin' || u.role === 'superadmin');
+                const badge = isAd ? '<span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Admin</span>' 
+                                   : (u.rollen_name ? `<span class="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold uppercase">${u.rollen_name}</span>` : '<span class="text-slate-400 text-xs italic">Ohne Rolle</span>');
+                
+                const actions = isAd ? `<button onclick="openEditUserModal(${u.id})" class="text-slate-400 hover:text-purple-600 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgEdit}</button>` 
+                                     : `<button onclick="openEditUserModal(${u.id})" class="text-slate-400 hover:text-purple-600 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgEdit}</button><button onclick="deleteUser(${u.id})" class="text-slate-400 hover:text-red-500 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgTrash}</button>`;
+                return `<div class="flex justify-between items-center p-3 md:p-4 hover:bg-slate-50/50 transition-all"><div class="w-5/12 font-bold text-sm md:text-base text-slate-800 truncate">${u.username}</div><div class="w-5/12 flex flex-col items-start gap-1"><div class="text-slate-400 text-[10px] md:text-xs truncate">${u.email}</div>${badge}</div><div class="w-2/12 flex justify-end gap-2">${actions}</div></div>`;
+            }).join('');
+        }
+
+        async function createRole() {
+            const data = {
+                name: document.getElementById('new-role-name').value,
+                permissions: { can_manage_users: document.getElementById('role-perm-users').checked, can_manage_items: document.getElementById('role-perm-items').checked, can_borrow_return: document.getElementById('role-perm-borrow').checked }
+            };
+            if(!data.name) return await customAlert("Rollen-Name darf nicht leer sein!");
+            try { 
+                await apiCall('/rollen', 'POST', data); 
+                document.getElementById('new-role-name').value = '';
+                document.getElementById('role-perm-users').checked = false; document.getElementById('role-perm-items').checked = false; document.getElementById('role-perm-borrow').checked = true;
+                loadUsersAndRoles(); 
+            } catch(e) { document.getElementById('admin-error').innerText = e.message; document.getElementById('admin-error').classList.remove('hidden'); }
+        }
+
+        async function deleteRole(id) { 
+            const confirmed = await customConfirm("Rolle löschen? Alle Nutzer mit dieser Rolle verlieren ihre Rechte!");
+            if(confirmed) { await apiCall(`/rollen/${id}`, 'DELETE'); loadUsersAndRoles(); } 
+        }
+
+        async function createSubUser() {
+            const data = { 
+                username: document.getElementById('new-user-name').value, email: document.getElementById('new-user-email').value, password: document.getElementById('new-user-pass').value, vereins_rolle_id: document.getElementById('new-user-role').value
+            };
+            try { 
+                await apiCall('/users', 'POST', data); 
+                document.getElementById('new-user-name').value = ''; document.getElementById('new-user-email').value = ''; document.getElementById('new-user-pass').value = ''; document.getElementById('new-user-role').value = '';
+                loadUsersAndRoles(); 
+            } catch(e) { document.getElementById('admin-error').innerText = e.message; document.getElementById('admin-error').classList.remove('hidden'); }
+        }
+
+        function openEditUserModal(id) {
+            const user = vereinUsers.find(u => u.id === id);
+            document.getElementById('edit-user-id').value = user.id; 
+            document.getElementById('edit-user-name').value = user.username; 
+            document.getElementById('edit-user-email').value = user.email; 
+            document.getElementById('edit-user-pass').value = ''; 
+            
+            const select = document.getElementById('edit-user-role');
+            if(user.role === 'admin' || user.role === 'superadmin') select.value = 'admin';
+            else select.value = user.vereins_rolle_id || '';
+
+            const isSelf = (user.id === getCurrentUserId());
+            select.disabled = isSelf;
+            if(isSelf) document.getElementById('edit-self-warning').classList.remove('hidden');
+            else document.getElementById('edit-self-warning').classList.add('hidden');
+
+            openModal('edit-user-modal');
+        }
+
+        async function saveEditedUser() {
+            try { 
+                const data = { username: document.getElementById('edit-user-name').value, email: document.getElementById('edit-user-email').value, password: document.getElementById('edit-user-pass').value, vereins_rolle_id: document.getElementById('edit-user-role').value };
+                await apiCall(`/users/${document.getElementById('edit-user-id').value}`, 'PUT', data); 
+                closeModal('edit-user-modal'); loadUsersAndRoles(); 
+            } catch(e) { await customAlert(e.message); }
+        }
+
+        async function deleteUser(id) { 
+            const confirmed = await customConfirm("Diesen Nutzer wirklich löschen?");
+            if(confirmed) { await apiCall(`/users/${id}`, 'DELETE'); loadUsersAndRoles(); } 
+        }
+
+        // --- EQUIPMENT ---
+        async function loadInventory() { try { inventory = await apiCall('/equipment'); renderInventory(); } catch (e) {} }
+
+        function setFilter(category) {
+            currentFilter = category;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if(btn.innerText.includes(category)) btn.className = "filter-btn active-filter px-4 md:px-5 py-2 md:py-2.5 bg-ozean-normal text-white rounded-xl font-bold shadow-md whitespace-nowrap transition-all text-sm md:text-base";
+                else btn.className = "filter-btn px-4 md:px-5 py-2 md:py-2.5 bg-white text-slate-600 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:shadow-sm whitespace-nowrap transition-all text-sm md:text-base";
+            });
+            renderInventory();
+        }
+
+        function renderInventory() {
+            const container = document.getElementById('inventory-container');
+            const filtered = inventory.filter(i => currentFilter === 'Alle' || i.category === currentFilter);
+            
+            if (filtered.length === 0) return container.innerHTML = `<div class="col-span-full py-16 text-center text-slate-400 font-medium">Kein Equipment gefunden.</div>`;
+
+            const svgEdit = document.getElementById('icon-edit').innerHTML;
+            const svgTrash = document.getElementById('icon-trash').innerHTML;
+
+            container.innerHTML = filtered.map(item => {
+                const isBorrowed = item.status === 'Ausgeliehen';
+                const isBroken = item.condition === 'Reparaturbedürftig';
+                
+                let borderClass = isBroken ? 'border-red-200 bg-red-50/30' : 'border-slate-200 bg-white';
+                let statusBadge = isBorrowed ? '<span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-[10px] md:text-xs font-bold uppercase tracking-wide">Ausgeliehen</span>' : (isBroken ? '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] md:text-xs font-bold uppercase tracking-wide">Defekt</span>' : '<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] md:text-xs font-bold uppercase tracking-wide">Verfügbar</span>');
+                
+                let tuevStatus = getTuevStatus(item.tuev);
+                let tuevBadge = tuevStatus === 'expired' ? '<span class="ml-2 bg-red-500 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase shadow-sm">Abgelaufen!</span>' : (tuevStatus === 'warning' ? '<span class="ml-2 bg-amber-200 text-amber-800 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Bald fällig</span>' : '');
+
+                let actionBtn = '';
+                if (isBroken && !isBorrowed) {
+                    if (userPermissions.can_manage_items) actionBtn = `<button onclick="markAsRepaired(${item.id})" class="w-full text-sm md:text-base font-bold bg-white border-2 border-green-500 text-green-600 py-3 rounded-xl hover:bg-green-50 transition-all shadow-sm">Als repariert markieren</button>`;
+                    else actionBtn = `<button class="w-full text-sm md:text-base font-bold bg-slate-100 text-slate-400 border border-slate-200 py-3 rounded-xl cursor-not-allowed">Reparatur nötig</button>`;
+                } else if (tuevStatus === 'expired' && !isBorrowed) {
+                    if (userPermissions.can_manage_items) actionBtn = `<button onclick="openRenewTuevModal(${item.id})" class="w-full flex justify-center items-center gap-2 text-sm md:text-base font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 py-3 rounded-xl transition-all shadow-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> TÜV erneuern</button>`;
+                    else actionBtn = `<button class="w-full text-sm md:text-base font-bold bg-slate-100 text-slate-400 border border-slate-200 py-3 rounded-xl cursor-not-allowed">TÜV abgelaufen (Gesperrt)</button>`;
+                } else if (isBorrowed) {
+                    if (userPermissions.can_borrow_return) actionBtn = `<button onclick="openActionModal(${item.id}, 'return')" class="w-full text-sm md:text-base font-bold bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-xl shadow-lg transition-all hover:-translate-y-0.5">Rückgabe erfassen</button>`;
+                } else {
+                    if (userPermissions.can_borrow_return) actionBtn = `<button onclick="openActionModal(${item.id}, 'borrow')" class="w-full text-sm md:text-base font-bold bg-ozean-normal hover:bg-ozean-tief text-white py-3 rounded-xl shadow-lg shadow-ozean-normal/20 transition-all hover:-translate-y-0.5">Ausleihen</button>`;
+                }
+
+                let editDeleteHtml = '';
+                if(userPermissions.can_manage_items) {
+                    editDeleteHtml = `<div class="absolute top-4 right-4 hidden group-hover:flex gap-2"><button onclick="openItemModal(${item.id})" class="p-1.5 md:p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-ozean-normal shadow-sm transition-all">${svgEdit}</button><button onclick="deleteItem(${item.id})" class="p-1.5 md:p-2 bg-white border border-slate-200 rounded-lg text-slate-400 hover:text-red-600 shadow-sm transition-all">${svgTrash}</button></div>`;
+                }
+
+                return `<div class="border ${borderClass} rounded-2xl p-5 md:p-6 shadow-sm hover:shadow-xl relative group flex flex-col justify-between transition-all duration-300">
+                    ${editDeleteHtml}
+                    <div>
+                        <div class="flex items-center gap-2 mb-2">
+                            ${statusBadge}
+                            <span class="text-[10px] md:text-xs font-mono font-bold text-slate-400 uppercase tracking-widest">${item.deviceId}</span>
+                        </div>
+                        <div class="text-[10px] md:text-xs font-bold text-ozean-normal uppercase tracking-wider mb-1">${item.category}</div>
+                        <h3 class="font-extrabold text-lg md:text-xl text-slate-800 leading-tight mb-4 pr-12">${item.name}</h3>
+                        <div class="bg-slate-50 border border-slate-100 rounded-xl p-3 md:p-4 text-xs md:text-sm mb-4 space-y-2">
+                            <div class="flex justify-between"><span class="text-slate-500">Zustand</span> <span class="font-bold ${isBroken?'text-red-600':''}">${item.condition}</span></div>
+                            <div class="flex items-center justify-between"><span class="text-slate-500">TÜV</span> <span class="font-bold flex items-center">${formatDateToGerman(item.tuev)} ${tuevBadge}</span></div>
+                        </div>
+                        ${isBorrowed ? `<div class="bg-amber-50 border border-amber-100 rounded-xl p-3 md:p-4 text-xs md:text-sm text-amber-800 mb-4 flex flex-col gap-2"><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg> <span class="truncate">Von: <b class="ml-1">${item.borrower}</b></span></span><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> <span class="truncate">Bis: <b class="ml-1">${formatDateToGerman(item.returnDate)}</b></span></span></div>` : ''}
+                    </div>
+                    <div class="mt-2">${actionBtn}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function formatDateToGerman(ds) { if (!ds) return '-'; const p = ds.split('-'); return p.length === 3 ? `${p[2]}.${p[1]}.${p[0]}` : ds; }
+        function getTuevStatus(ds) {
+            if (!ds) return 'ok';
+            const td = new Date(ds); const ty = new Date(); td.setHours(0,0,0,0); ty.setHours(0,0,0,0);
+            if (td < ty) return 'expired';
+            const m = Math.ceil((td - ty) / (1000 * 60 * 60 * 24)) / 30.44;
+            if (m <= 3) return 'warning'; return 'ok';
+        }
+
+        function openModal(id) { 
+            if(id === 'add-modal') { 
+                id = 'item-modal'; 
+                document.getElementById('item-id').value = ''; 
+                document.getElementById('item-modal-title').innerText = 'Neues Inventar'; 
+                document.getElementById('item-device-id').value = ''; 
+                document.getElementById('item-condition').value = 'Gut';
+                document.getElementById('item-tuev').value = '';
+                document.getElementById('id-field-container').classList.add('hidden');
+            } else if (id === 'item-modal') {
+                document.getElementById('id-field-container').classList.remove('hidden');
+            }
+            document.getElementById(id).classList.remove('hidden'); 
+        }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+        async function saveItem() {
+            const id = document.getElementById('item-id').value;
+            const data = { name: document.getElementById('item-name').value, category: document.getElementById('item-category').value, tuev: document.getElementById('item-tuev').value, condition: document.getElementById('item-condition').value };
+            if(!data.name) return await customAlert("Bitte eine Bezeichnung eintragen.");
+            try {
+                if(id) await apiCall(`/equipment/${id}`, 'PUT', data);
+                else await apiCall('/equipment', 'POST', data);
+                closeModal('item-modal'); loadInventory();
+            } catch(e) { await customAlert(e.message); }
+        }
+
+        function openItemModal(id) {
+            const item = inventory.find(i => i.id === id);
+            document.getElementById('item-id').value = item.id; 
+            document.getElementById('item-name').value = item.name; 
+            document.getElementById('item-device-id').value = item.deviceId;
+            document.getElementById('item-category').value = item.category; 
+            document.getElementById('item-condition').value = item.condition; 
+            document.getElementById('item-tuev').value = item.tuev;
+            document.getElementById('item-modal-title').innerText = 'Inventar bearbeiten';
+            openModal('item-modal');
+        }
+
+        async function deleteItem(id) { 
+            const confirmed = await customConfirm("Eintrag aus dem Inventar löschen?");
+            if(confirmed) { try { await apiCall(`/equipment/${id}`, 'DELETE'); loadInventory(); } catch(e){ await customAlert(e.message); } } 
+        }
+
+        function openRenewTuevModal(id) { document.getElementById('renew-tuev-id').value = id; document.getElementById('renew-tuev-date').value = ''; openModal('renew-tuev-modal'); }
+
+        async function confirmRenewTuev() {
+            const id = document.getElementById('renew-tuev-id').value, newDate = document.getElementById('renew-tuev-date').value;
+            if(!newDate) return await customAlert("Bitte Datum wählen!");
+            const item = inventory.find(i => i.id == id);
+            try { await apiCall(`/equipment/${id}`, 'PUT', { name: item.name, category: item.category, tuev: newDate, condition: item.condition }); closeModal('renew-tuev-modal'); loadInventory(); } catch(e){ await customAlert(e.message); }
+        }
+
+        function openActionModal(id, type) {
+            document.getElementById('action-id').value = id; document.getElementById('action-type').value = type;
+            if(type === 'borrow') {
+                document.getElementById('action-borrower').value = ''; document.getElementById('action-date').value = '';     
+                document.getElementById('action-title').innerText = 'Ausgabe erfassen';
+                document.getElementById('action-borrow-fields').classList.remove('hidden'); document.getElementById('action-return-fields').classList.add('hidden');
+            } else {
+                document.getElementById('action-condition').value = 'Gut';
+                document.getElementById('action-title').innerText = 'Rücknahme erfassen';
+                document.getElementById('action-borrow-fields').classList.add('hidden'); document.getElementById('action-return-fields').classList.remove('hidden');
+            }
+            openModal('action-modal');
+        }
+
+        async function confirmAction() {
+            const id = document.getElementById('action-id').value, type = document.getElementById('action-type').value;
+            let data = {};
+            if(type === 'borrow') { data = { borrower: document.getElementById('action-borrower').value, returnDate: document.getElementById('action-date').value }; } 
+            else { data = { condition: document.getElementById('action-condition').value }; }
+            
+            try { await apiCall(`/equipment/${id}/action`, 'PUT', data); closeModal('action-modal'); loadInventory(); } catch(e){ await customAlert(e.message); }
+        }
+
+        async function markAsRepaired(id) {
+            const item = inventory.find(i => i.id == id);
+            try { await apiCall(`/equipment/${id}`, 'PUT', { name: item.name, category: item.category, tuev: item.tuev, condition: 'Gut' }); loadInventory(); } catch(e){ await customAlert(e.message); }
+        }
+
+        checkAuth();
+    </script>
+</body>
+</html>
