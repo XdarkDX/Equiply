@@ -59,7 +59,7 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
     // --- Inventar ---
     const SELECT_ITEMS = `
         SELECT e.id, e.device_id AS deviceId, e.name, e.kategorie_id, k.name AS category, e.hersteller, e.seriennummer, e.groesse,
-               e.lagerort, e.kaufdatum, e.tuev, e.condition, e.notes, e.created_at, e.updated_at,
+               e.lagerort, e.tuev, e.condition, e.notes, e.created_at, e.updated_at,
                CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status,
                a.borrower, a.rueckgabe_geplant AS returnDate, a.ausgeliehen_am,
                (SELECT b.id FROM bilder b WHERE b.equipment_id = e.id ORDER BY b.id LIMIT 1) AS bild_id,

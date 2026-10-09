@@ -108,6 +108,15 @@ systemctl daemon-reload
 systemctl enable equiply >/dev/null 2>&1
 systemctl restart equiply
 
+info "Befehl equiply-passwort einrichten"
+cat > /usr/local/bin/equiply-passwort <<EOF
+#!/bin/sh
+# Passwort eines Mitglieds zurücksetzen. Ohne Angaben: alle Benutzer anzeigen.
+set -a; . $ENV_FILE; set +a
+exec runuser -u $SERVICE_USER -- $(command -v node) $APP_DIR/scripts/passwort-reset.js "\$@"
+EOF
+chmod 755 /usr/local/bin/equiply-passwort
+
 info "Tägliches Backup einrichten ($DATA_DIR/backups, Datenbank 14 Tage + Fotos)"
 cat > /etc/cron.daily/equiply-backup <<EOF
 #!/bin/sh

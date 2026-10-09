@@ -13,7 +13,6 @@ const HEADER_SYNONYMS = {
     seriennummer: ['seriennummer', 'seriennr', 'sn', 'snr', 'serial', 'serialnumber'],
     groesse: ['groesse', 'size', 'volumen', 'liter', 'inhalt', 'gewicht'],
     lagerort: ['lagerort', 'standort', 'ort', 'lager', 'platz', 'location', 'aufbewahrung', 'regal', 'schrank'],
-    kaufdatum: ['kaufdatum', 'gekauftam', 'anschaffung', 'anschaffungsdatum', 'kauf', 'einkauf', 'erworben', 'erworbenam'],
     tuev: ['tuev', 'tuv', 'tuevbis', 'tuevdatum', 'naechstertuev', 'tuevfaellig', 'pruefung', 'tuevpruefung', 'pruefdatum', 'naechstepruefung',
         'pruefungbis', 'wartung', 'naechstewartung', 'wartungbis', 'faellig', 'faelligkeit'],
     condition: ['zustand', 'condition'],
@@ -22,7 +21,7 @@ const HEADER_SYNONYMS = {
 // Teilwörter, falls keine exakte Übereinstimmung gefunden wurde
 const HEADER_CONTAINS = [['tuev', 'tuev'], ['pruef', 'tuev'], ['wartung', 'tuev'], ['serien', 'seriennummer'], ['inventar', 'deviceId'],
     ['bezeichnung', 'name'], ['kategorie', 'kategorie'], ['hersteller', 'hersteller'], ['lagerort', 'lagerort'], ['standort', 'lagerort'],
-    ['kauf', 'kaufdatum'], ['anschaff', 'kaufdatum'], ['zustand', 'condition'], ['bemerk', 'notes'], ['notiz', 'notes'], ['groesse', 'groesse']];
+    ['zustand', 'condition'], ['bemerk', 'notes'], ['notiz', 'notes'], ['groesse', 'groesse']];
 
 const CATEGORY_SYNONYMS = {
     flaschen: ['flasche', 'flaschen', 'pressluftflasche', 'tauchflasche', 'tank', 'cylinder', 'stahlflasche', 'aluflasche'],
@@ -240,7 +239,7 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
         if (mapping.deviceId) daten.deviceId = toText(get(r, 'deviceId'), 30);
         daten.name = toText(get(r, 'name'), 100);
 
-        for (const field of ['kaufdatum', 'tuev']) {
+        for (const field of ['tuev']) {
             if (!mapping[field]) continue;
             const d = parseDate(get(r, field), field);
             if (d.fehler) fehler.push(`${field === 'tuev' ? 'TÜV' : 'Kaufdatum'}: ${d.fehler}`);

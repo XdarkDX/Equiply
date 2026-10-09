@@ -10,7 +10,6 @@ test('Datumsformate werden erkannt', () => {
     assert.deepEqual(parseDate('2027-05-03', 'tuev'), { iso: '2027-05-03' });
     assert.equal(parseDate('05/2027', 'tuev').iso, '2027-05-31', 'TÜV Monat/Jahr = Monatsende');
     assert.equal(parseDate('02/2028', 'tuev').iso, '2028-02-29', 'Schaltjahr');
-    assert.equal(parseDate('05/2020', 'kaufdatum').iso, '2020-05-01');
     assert.equal(parseDate(new Date(Date.UTC(2026, 0, 15)), 'tuev').iso, '2026-01-15');
     assert.equal(parseDate(46037, 'tuev').iso, '2026-01-15', 'Excel-Seriennummer');
     assert.ok(parseDate('31.02.2027', 'tuev').fehler);

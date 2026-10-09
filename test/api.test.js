@@ -87,7 +87,7 @@ test('Kategorien: eigene anlegen, Kürzel-Konflikte, Löschen nur wenn leer', as
 test('Geräte anlegen mit allen Feldern und fortlaufenden Nummern', async () => {
     const kats = (await admin.get('/api/kategorien')).body;
     ids.flaschen = kats.find(k => k.name === 'Flaschen').id;
-    const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', kaufdatum: '2020-05-01', notes: 'Rot lackiert' });
+    const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', notes: 'Rot lackiert' });
     const b = await admin.post('/api/equipment', { name: '10L Alu', kategorie_id: ids.flaschen });
     const c = await admin.post('/api/equipment', { name: 'Taschenlampe', kategorie_id: ids.lampen });
     assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['101', '102', '601']);

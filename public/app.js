@@ -485,7 +485,6 @@ function renderDetail() {
                     ${field('Seriennummer', esc(i.seriennummer), 'font-mono')}
                     ${field('Größe', esc(i.groesse))}
                     ${field('Lagerort', esc(i.lagerort))}
-                    ${field('Kaufdatum', i.kaufdatum ? fmtDate(i.kaufdatum) : '')}
                     ${field('Erfasst am', fmtDate(i.created_at))}
                 </dl>
                 ${i.notes ? `<div class="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 whitespace-pre-line mb-5">${esc(i.notes)}</div>` : ''}
@@ -549,7 +548,7 @@ function activityList(rows, withItem) {
 function openItemForm(item) {
     const form = $('#item-modal form');
     form.reset();
-    $('#item-kategorie').innerHTML = state.kategorien.map(k => `<option value="${k.id}">${esc(k.name)} (${esc(k.prefix)}…)</option>`).join('');
+    $('#item-kategorie').innerHTML = state.kategorien.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('');
     const orte = [...new Set(state.items.map(i => i.lagerort).filter(Boolean))].sort();
     $('#lagerorte').innerHTML = orte.map(o => `<option value="${esc(o)}">`).join('');
     if (item) {
@@ -560,11 +559,12 @@ function openItemForm(item) {
     }
     $('#item-title').textContent = item ? 'Gerät bearbeiten' : 'Neues Gerät';
     $('#item-photo-field').hidden = !!item;
+    $('#item-deviceid-field').hidden = !item; // Nummer wird automatisch vergeben, beim Anlegen nicht anzeigen
     openModal('item-modal');
 }
 
 function itemPayload(i, overrides = {}) {
-    const keys = ['name', 'kategorie_id', 'hersteller', 'seriennummer', 'groesse', 'lagerort', 'kaufdatum', 'tuev', 'condition', 'notes'];
+    const keys = ['name', 'kategorie_id', 'hersteller', 'seriennummer', 'groesse', 'lagerort', 'tuev', 'condition', 'notes'];
     const out = {};
     for (const k of keys) out[k] = i[k] ?? null;
     return { ...out, ...overrides };
@@ -573,7 +573,7 @@ function itemPayload(i, overrides = {}) {
 // =====================================================================
 // Import
 // =====================================================================
-const FIELD_LABEL = { deviceId: 'Inventarnummer', name: 'Bezeichnung', kategorie: 'Kategorie', hersteller: 'Hersteller', seriennummer: 'Seriennummer', groesse: 'Größe', lagerort: 'Lagerort', kaufdatum: 'Kaufdatum', tuev: 'TÜV', condition: 'Zustand', notes: 'Notizen' };
+const FIELD_LABEL = { deviceId: 'Inventarnummer', name: 'Bezeichnung', kategorie: 'Kategorie', hersteller: 'Hersteller', seriennummer: 'Seriennummer', groesse: 'Größe', lagerort: 'Lagerort', tuev: 'TÜV', condition: 'Zustand', notes: 'Notizen' };
 
 function openImport() {
     state.importPreview = null;
@@ -788,6 +788,11 @@ const actions = {
         location.hash = '';
         showAuth('login');
     },
+    'toggle-password': (el) => {
+        const input = el.parentElement.querySelector('input');
+        input.type = input.type === 'password' ? 'text' : 'password';
+        el.textContent = input.type === 'password' ? 'Anzeigen' : 'Verbergen';
+    },
     'toggle-menu': () => { $('#user-menu').hidden = !$('#user-menu').hidden; },
     close: (el) => closeModal(el.closest('.overlay').id),
     'close-lightbox': () => { $('#lightbox').hidden = true; },
@@ -907,7 +912,9 @@ const forms = {
         await startApp();
     },
     async setup(form) {
-        await api('/setup', { method: 'POST', body: formValues(form) });
+        const v = formValues(form);
+        if (v.password !== v.password2) throw new Error('Die Passwörter stimmen nicht überein.');
+        await api('/setup', { method: 'POST', body: v });
         state.setup.einrichtung = false;
         state.me = await api('/me');
         form.reset();

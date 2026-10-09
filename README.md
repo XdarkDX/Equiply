@@ -5,7 +5,7 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 
 ## Funktionen
 
-- **Inventar** mit Inventarnummer, Kategorie, Hersteller, Seriennummer, Größe, Lagerort, Kaufdatum, TÜV/Prüfdatum, Zustand und Notizen
+- **Inventar** mit Inventarnummer, Kategorie, Hersteller, Seriennummer, Größe, Lagerort, TÜV/Prüfdatum, Zustand und Notizen
 - **Fotos** pro Gerät (auch direkt mit der Handykamera, werden automatisch verkleinert)
 - **Kommentare** pro Gerät, z. B. für Mängel oder Wartungshinweise
 - **Ausleihe & Rückgabe** mit geplantem Rückgabedatum, Zustand bei Rückgabe und vollständigem Verlauf
@@ -78,6 +78,8 @@ systemctl start equiply
 systemctl status equiply       # läuft der Dienst?
 journalctl -u equiply -f       # Live-Log
 systemctl restart equiply      # nach Änderungen an der Konfiguration
+equiply-passwort               # alle Benutzer anzeigen
+equiply-passwort anna NeuesPasswort123   # Passwort zurücksetzen (z. B. wenn der Admin es vergessen hat)
 ```
 
 ### Konfiguration (`/etc/equiply/equiply.env`)

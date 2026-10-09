@@ -8,7 +8,6 @@ const FIELDS = [
     { key: 'seriennummer', label: 'Seriennummer', max: 100 },
     { key: 'groesse', label: 'Größe', max: 50 },
     { key: 'lagerort', label: 'Lagerort', max: 100 },
-    { key: 'kaufdatum', label: 'Kaufdatum', date: true },
     { key: 'tuev', label: 'TÜV / Prüfung', date: true },
     { key: 'condition', label: 'Zustand' },
     { key: 'notes', label: 'Notizen', max: 2000 },
@@ -24,10 +23,10 @@ function createInventory(db) {
         kategorie: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE id = ? AND verein_id = ?`),
         deviceIdTaken: db.prepare(`SELECT id FROM equipment WHERE verein_id = ? AND device_id = ?`),
         maxNr: db.prepare(`SELECT MAX(CAST(substr(device_id, ?) AS INTEGER)) AS nr FROM equipment WHERE verein_id = ? AND device_id GLOB ? || '[0-9]*'`),
-        insert: db.prepare(`INSERT INTO equipment (verein_id, kategorie_id, device_id, name, hersteller, seriennummer, groesse, lagerort, kaufdatum, tuev, condition, notes)
-                            VALUES (@verein_id, @kategorie_id, @device_id, @name, @hersteller, @seriennummer, @groesse, @lagerort, @kaufdatum, @tuev, @condition, @notes)`),
+        insert: db.prepare(`INSERT INTO equipment (verein_id, kategorie_id, device_id, name, hersteller, seriennummer, groesse, lagerort, tuev, condition, notes)
+                            VALUES (@verein_id, @kategorie_id, @device_id, @name, @hersteller, @seriennummer, @groesse, @lagerort, @tuev, @condition, @notes)`),
         update: db.prepare(`UPDATE equipment SET kategorie_id = @kategorie_id, name = @name, hersteller = @hersteller, seriennummer = @seriennummer, groesse = @groesse,
-                            lagerort = @lagerort, kaufdatum = @kaufdatum, tuev = @tuev, condition = @condition, notes = @notes WHERE id = @id`),
+                            lagerort = @lagerort, tuev = @tuev, condition = @condition, notes = @notes WHERE id = @id`),
         byId: db.prepare(`SELECT e.*, k.name AS kategorie FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.id = ? AND e.verein_id = ?`),
         log: db.prepare(`INSERT INTO aktivitaeten (verein_id, nutzer_id, equipment_id, aktion, details) VALUES (?, ?, ?, ?, ?)`),
     };
@@ -101,7 +100,7 @@ function createInventory(db) {
 
     function display(key, value) {
         if (value === null || value === undefined || value === '') return '–';
-        if (key === 'kaufdatum' || key === 'tuev') return formatDate(value);
+        if (key === 'tuev') return formatDate(value);
         if (key === 'condition') return CONDITION_LABELS[value] || value;
         if (key === 'notes') return value.length > 40 ? value.slice(0, 40) + '…' : value;
         return value;

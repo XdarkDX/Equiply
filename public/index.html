@@ -34,8 +34,8 @@
 
             <form id="form-login" data-form="login" class="space-y-4">
                 <h2 class="font-extrabold text-xl text-slate-800">Anmelden</h2>
-                <div><label class="label" for="login-user">Benutzername oder E-Mail</label><input id="login-user" name="username" class="input" autocomplete="username" required></div>
-                <div><label class="label" for="login-pass">Passwort</label><input id="login-pass" name="password" type="password" class="input" autocomplete="current-password" required></div>
+                <div><label class="label" for="login-user">Benutzername oder E-Mail</label><input id="login-user" name="username" class="input" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></div>
+                <div><label class="label" for="login-pass">Passwort</label><div class="relative"><input id="login-pass" name="password" type="password" class="input pr-20" autocomplete="current-password" required><button type="button" data-action="toggle-password" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-700 px-2 py-1">Anzeigen</button></div></div>
                 <button class="btn-primary w-full py-3.5">Anmelden</button>
                 <p class="text-xs text-slate-400 text-center">Passwort vergessen? Ein Admin deines Vereins kann es zurücksetzen.</p>
                 <p id="register-link" hidden class="text-sm text-center"><button type="button" data-action="show-setup" class="font-bold text-ozean-normal hover:underline">Neuen Verein registrieren</button></p>
@@ -47,9 +47,10 @@
                     <p id="setup-hint" class="text-sm text-slate-500 mt-1">Du wirst Admin und kannst danach weitere Mitglieder einladen.</p>
                 </div>
                 <div><label class="label" for="setup-verein">Vereinsname</label><input id="setup-verein" name="vereinName" class="input" required maxlength="100" placeholder="z. B. Tauchclub Nordsee e.V."></div>
-                <div><label class="label" for="setup-user">Dein Benutzername</label><input id="setup-user" name="username" class="input" required maxlength="50" autocomplete="username"></div>
-                <div><label class="label" for="setup-email">E-Mail</label><input id="setup-email" name="email" type="email" class="input" required autocomplete="email"></div>
-                <div><label class="label" for="setup-pass">Passwort</label><input id="setup-pass" name="password" type="password" class="input" required minlength="8" autocomplete="new-password" placeholder="Mindestens 8 Zeichen"></div>
+                <div><label class="label" for="setup-user">Dein Benutzername</label><input id="setup-user" name="username" class="input" required maxlength="50" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+                <div><label class="label" for="setup-email">E-Mail</label><input id="setup-email" name="email" type="email" class="input" required autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+                <div><label class="label" for="setup-pass">Passwort</label><div class="relative"><input id="setup-pass" name="password" type="password" class="input pr-20" required minlength="8" autocomplete="new-password" placeholder="Mindestens 8 Zeichen"><button type="button" data-action="toggle-password" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-700 px-2 py-1">Anzeigen</button></div></div>
+                <div><label class="label" for="setup-pass2">Passwort wiederholen</label><input id="setup-pass2" name="password2" type="password" class="input" required minlength="8" autocomplete="new-password"></div>
                 <button class="btn-dark w-full py-3.5">Verein einrichten</button>
                 <p id="login-link" hidden class="text-sm text-center"><button type="button" data-action="show-login" class="font-bold text-ozean-normal hover:underline">Zurück zum Login</button></p>
             </form>
@@ -157,12 +158,11 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="sm:col-span-2"><label class="label">Bezeichnung *</label><input name="name" class="input" required maxlength="100" placeholder="z. B. 12 L Stahlflasche"></div>
             <div><label class="label">Kategorie</label><select name="kategorie_id" class="input" id="item-kategorie"></select></div>
-            <div><label class="label">Inventarnummer</label><input name="deviceId" class="input font-mono" disabled placeholder="wird automatisch vergeben"></div>
+            <div id="item-deviceid-field"><label class="label">Inventarnummer</label><input name="deviceId" class="input font-mono" disabled></div>
             <div><label class="label">Hersteller</label><input name="hersteller" class="input" maxlength="100"></div>
             <div><label class="label">Seriennummer</label><input name="seriennummer" class="input" maxlength="100"></div>
             <div><label class="label">Größe / Volumen</label><input name="groesse" class="input" maxlength="50" placeholder="z. B. XL, 12 L, 2 kg"></div>
             <div><label class="label">Lagerort</label><input name="lagerort" class="input" maxlength="100" list="lagerorte" placeholder="z. B. Regal 3"></div>
-            <div><label class="label">Kaufdatum</label><input name="kaufdatum" type="date" class="input"></div>
             <div><label class="label">TÜV / nächste Prüfung</label><input name="tuev" type="date" class="input"></div>
             <div class="sm:col-span-2"><label class="label">Zustand</label>
                 <select name="condition" class="input"><option value="Gut">Einwandfrei</option><option value="Gebrauchsspuren">Leichte Mängel</option><option value="Reparaturbedürftig">Defekt</option></select>
@@ -240,7 +240,7 @@
             <div class="mt-5 grid md:grid-cols-2 gap-4 text-sm text-slate-600">
                 <div class="bg-slate-50 rounded-xl p-4">
                     <div class="font-bold text-slate-800 mb-1">Eigene Tabelle?</div>
-                    Kein Problem. Wichtig ist nur eine Spalte „Bezeichnung“ (oder „Name“, „Gerät“). Erkannt werden außerdem z. B. Kategorie, Inventarnummer, Hersteller, Seriennummer, Größe, Lagerort, Kaufdatum, TÜV, Zustand und Notizen.
+                    Kein Problem. Wichtig ist nur eine Spalte „Bezeichnung“ (oder „Name“, „Gerät“). Erkannt werden außerdem z. B. Kategorie, Inventarnummer, Hersteller, Seriennummer, Größe, Lagerort, TÜV, Zustand und Notizen.
                 </div>
                 <div class="bg-slate-50 rounded-xl p-4">
                     <div class="font-bold text-slate-800 mb-1">Lieber mit Vorlage?</div>

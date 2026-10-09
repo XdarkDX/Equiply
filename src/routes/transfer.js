@@ -12,7 +12,6 @@ const COLUMNS = [
     { header: 'Seriennummer', key: 'seriennummer', width: 18 },
     { header: 'Größe', key: 'groesse', width: 10 },
     { header: 'Lagerort', key: 'lagerort', width: 16 },
-    { header: 'Kaufdatum', key: 'kaufdatum', width: 13, date: true },
     { header: 'TÜV / Prüfung', key: 'tuev', width: 14, date: true },
     { header: 'Zustand', key: 'condition', width: 15 },
     { header: 'Notizen', key: 'notes', width: 40 },
@@ -61,7 +60,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
     // --- Export ---
     app.get('/api/export/inventar.xlsx', authenticate, async (req, res) => {
         const items = db.prepare(`
-            SELECT e.device_id AS deviceId, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.kaufdatum, e.tuev,
+            SELECT e.device_id AS deviceId, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
                    e.condition, e.notes, CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status, a.borrower, a.rueckgabe_geplant AS returnDate
             FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id
             LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
@@ -73,7 +72,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         const columns = [...COLUMNS, ...EXPORT_EXTRA];
         styleSheet(sheet, columns);
         for (const i of items) {
-            sheet.addRow({ ...i, condition: CONDITION_LABELS[i.condition], kaufdatum: toDate(i.kaufdatum), tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
+            sheet.addRow({ ...i, condition: CONDITION_LABELS[i.condition], tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
         }
         sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
         await sendWorkbook(res, wb, `equiply-inventar-${today()}.xlsx`);
@@ -154,7 +153,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
                                 resolve = makeCategoryResolver(categories);
                             }
                         }
-                        for (const f of ['kaufdatum', 'tuev']) if (d[f] && !isIsoDate(d[f])) throw new HttpError(400, `${f === 'tuev' ? 'TÜV' : 'Kaufdatum'} ist ungültig`);
+                        for (const f of ['tuev']) if (d[f] && !isIsoDate(d[f])) throw new HttpError(400, `${f === 'tuev' ? 'TÜV' : 'Kaufdatum'} ist ungültig`);
                         if (d.condition && !CONDITIONS.includes(d.condition)) throw new HttpError(400, 'Zustand ist ungültig');
 
                         const deviceId = d.deviceId ? String(d.deviceId).trim() : null;
