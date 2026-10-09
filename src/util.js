@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const CONDITIONS = ['Gut', 'Gebrauchsspuren', 'Reparaturbedürftig'];
 const CONDITION_LABELS = { Gut: 'Einwandfrei', Gebrauchsspuren: 'Leichte Mängel', Reparaturbedürftig: 'Defekt' };
 const DEFAULT_CATEGORIES = [['Flaschen', '1'], ['Atemregler', '2'], ['Jackets', '3'], ['Blei', '4'], ['Sonstiges', '5']];
@@ -73,8 +75,24 @@ function detectImage(buf) {
     return null;
 }
 
+// ---------- Feste QR-Codes ----------
+// Crockford-Base32: keine leicht verwechselbaren Zeichen (kein I, L, O, U)
+const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+function generateCode(length = 6) {
+    let code = '';
+    for (let i = 0; i < length; i++) code += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+    return code;
+}
+// Eingaben vereinheitlichen: Großbuchstaben, O -> 0, I/L -> 1, Leer- und Sonderzeichen weg
+function normalizeCode(value) {
+    return String(value ?? '').toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/[^0-9A-Z]/g, '');
+}
+function isValidCode(code) {
+    return /^[0-9A-HJKMNP-TV-Z]{4,12}$/.test(code);
+}
+
 module.exports = {
     CONDITIONS, CONDITION_LABELS, DEFAULT_CATEGORIES, MIN_PASSWORD_LENGTH, HttpError,
     requireText, optionalText, requireEmail, requirePassword, optionalDate, isIsoDate, requireOneOf, requireId,
-    today, formatDate, normalizeKey, detectImage,
+    today, formatDate, normalizeKey, detectImage, generateCode, normalizeCode, isValidCode,
 };

@@ -154,3 +154,28 @@ test('Export und Vorlage sind gültige Excel-Dateien und wieder importierbar', a
     await wb2.xlsx.load(vorlage.body);
     assert.deepEqual(wb2.worksheets.map(w => w.name), ['Inventar', 'Hinweise']);
 });
+
+test('Re-Import erkennt Geräte am festen QR-Code, auch wenn sich die Inventarnummer geändert hat', async () => {
+    const items = (await admin.get('/api/equipment')).body;
+    const f = items.find(i => i.deviceId === '1001');
+    const kats = (await admin.get('/api/kategorien')).body;
+    // Kategorie in Excel geändert, Inventarnummer veraltet – Zuordnung trotzdem über den QR-Code
+    const file = await xlsx([
+        ['QR-Code', 'Inventarnummer', 'Bezeichnung', 'Kategorie'],
+        [f.qr_code.toLowerCase(), '1001', 'Flasche umsortiert', 'Sonstiges'],
+        ['NEW234', '', 'Gerät mit vorgelasertem Schild', 'Blei'],
+        ['NEW234', '', 'Doppelt', 'Blei'],
+    ]);
+    const p = (await admin.post('/api/import/vorschau', file)).body;
+    assert.equal(p.spalten.qr_code, 'QR-Code');
+    assert.deepEqual(p.zeilen.map(z => z.aktion), ['aktualisieren', 'neu', 'fehler']);
+    const r = (await admin.post('/api/import', { zeilen: p.zeilen.filter(z => z.aktion !== 'fehler') })).body;
+    assert.equal(r.aktualisiert, 1);
+    assert.equal(r.neu, 1);
+    const after = (await admin.get('/api/equipment')).body;
+    const moved = after.find(i => i.id === f.id);
+    assert.equal(moved.category, 'Sonstiges');
+    assert.equal(moved.qr_code, f.qr_code, 'QR-Code bleibt');
+    assert.equal(after.find(i => i.name === 'Gerät mit vorgelasertem Schild').qr_code, 'NEW234');
+    assert.ok(kats.length);
+});

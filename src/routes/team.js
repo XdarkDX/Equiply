@@ -12,11 +12,21 @@ module.exports = function teamRoutes(app, { db, config, sessions, log, sendLogo 
 
     // --- Verein ---
     app.put('/api/verein', authenticate, requireAdmin, (req, res) => {
+        const old = db.prepare(`SELECT name, farbe, qr_url FROM vereine WHERE id = ?`).get(req.user.verein_id);
         const name = requireText(req.body.name, 'Vereinsname', 100);
-        let farbe = req.body.farbe ? String(req.body.farbe).toLowerCase() : null;
+        // Nicht mitgeschickte Felder bleiben unverändert
+        let farbe = req.body.farbe === undefined ? old.farbe : (req.body.farbe ? String(req.body.farbe).toLowerCase() : null);
         if (farbe && !/^#[0-9a-f]{6}$/.test(farbe)) throw new HttpError(400, 'Farbe ist ungültig.');
-        const old = db.prepare(`SELECT name, farbe FROM vereine WHERE id = ?`).get(req.user.verein_id);
-        db.prepare(`UPDATE vereine SET name = ?, farbe = ? WHERE id = ?`).run(name, farbe, req.user.verein_id);
+        let qrUrl = req.body.qr_url === undefined ? old.qr_url : (req.body.qr_url ? String(req.body.qr_url).trim() : null);
+        if (qrUrl) {
+            if (!/^https?:\/\//i.test(qrUrl)) qrUrl = 'http://' + qrUrl;
+            let u;
+            try { u = new URL(qrUrl); } catch (e) { throw new HttpError(400, 'Die Adresse für QR-Codes ist ungültig.'); }
+            if (!['http:', 'https:'].includes(u.protocol) || u.search || u.hash) throw new HttpError(400, 'Die Adresse für QR-Codes ist ungültig.');
+            qrUrl = (u.origin + u.pathname).replace(/\/+$/, '');
+        }
+        db.prepare(`UPDATE vereine SET name = ?, farbe = ?, qr_url = ? WHERE id = ?`).run(name, farbe, qrUrl, req.user.verein_id);
+        if (old.qr_url !== qrUrl) log(req.user.verein_id, req.user.id, null, 'verein', `Adresse für QR-Codes: ${qrUrl || 'automatisch'}`);
         if (old.name !== name) log(req.user.verein_id, req.user.id, null, 'verein', `Verein umbenannt in „${name}“`);
         if (old.farbe !== farbe) log(req.user.verein_id, req.user.id, null, 'verein', `Vereinsfarbe ${farbe ? `auf ${farbe} gesetzt` : 'zurückgesetzt'}`);
         res.json({ message: 'Gespeichert.' });

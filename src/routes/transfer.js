@@ -6,6 +6,7 @@ const { buildPreview, makeCategoryResolver, MAX_ROWS } = require('../importer');
 
 const COLUMNS = [
     { header: 'Inventarnummer', key: 'deviceId', width: 16 },
+    { header: 'QR-Code', key: 'qr_code', width: 11 },
     { header: 'Bezeichnung', key: 'name', width: 32 },
     { header: 'Kategorie', key: 'category', width: 16 },
     { header: 'Hersteller', key: 'hersteller', width: 18 },
@@ -54,13 +55,14 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         for (const r of rows) if (r.seriennummer) serialCount.set(r.seriennummer.toLowerCase(), (serialCount.get(r.seriennummer.toLowerCase()) || []).concat(r.id));
         // Seriennummer nur verwenden, wenn sie eindeutig ist
         const bySerial = new Map([...serialCount].filter(([, ids]) => ids.length === 1).map(([k, ids]) => [k, ids[0]]));
-        return { byDeviceId, bySerial };
+        const byQr = new Map(db.prepare(`SELECT code, equipment_id FROM qr_codes WHERE verein_id = ? AND equipment_id IS NOT NULL`).all(vereinId).map(r => [r.code, r.equipment_id]));
+        return { byDeviceId, bySerial, byQr };
     }
 
     // --- Export ---
     app.get('/api/export/inventar.xlsx', authenticate, async (req, res) => {
         const items = db.prepare(`
-            SELECT e.device_id AS deviceId, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
+            SELECT e.device_id AS deviceId, (SELECT qc.code FROM qr_codes qc WHERE qc.equipment_id = e.id) AS qr_code, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
                    e.condition, e.notes, CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status, a.borrower, a.rueckgabe_geplant AS returnDate
             FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id
             LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
@@ -112,11 +114,12 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
 
     // --- Import, Schritt 1: Datei prüfen und Vorschau liefern (es wird noch nichts gespeichert) ---
     app.post('/api/import/vorschau', ...canManageItems, express.raw({ type: () => true, limit: '15mb' }), async (req, res) => {
-        const { byDeviceId, bySerial } = existingMaps(req.user.verein_id);
+        const { byDeviceId, bySerial, byQr } = existingMaps(req.user.verein_id);
         const preview = await buildPreview(req.body, {
             categories: inventory.categories(req.user.verein_id),
             existingByDeviceId: byDeviceId,
             existingBySerial: bySerial,
+            existingByQr: byQr,
         });
         res.json(preview);
     });
@@ -134,7 +137,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         db.transaction(() => {
             let categories = inventory.categories(vereinId);
             let resolve = makeCategoryResolver(categories);
-            const { byDeviceId, bySerial } = existingMaps(vereinId);
+            const { byDeviceId, bySerial, byQr } = existingMaps(vereinId);
 
             for (const z of zeilen) {
                 const nr = z && z.zeile;
@@ -157,22 +160,26 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
                         if (d.condition && !CONDITIONS.includes(d.condition)) throw new HttpError(400, 'Zustand ist ungültig');
 
                         const deviceId = d.deviceId ? String(d.deviceId).trim() : null;
-                        const zielId = deviceId ? byDeviceId.get(deviceId.toLowerCase())
-                            : (d.seriennummer ? bySerial.get(String(d.seriennummer).toLowerCase()) : undefined);
+                        const qr = d.qr_code ? String(d.qr_code) : null;
+                        const zielId = (qr && byQr.get(qr)) || (deviceId ? byDeviceId.get(deviceId.toLowerCase())
+                            : (d.seriennummer ? bySerial.get(String(d.seriennummer).toLowerCase()) : undefined));
 
                         if (zielId) {
                             if (!aktualisieren) { result.uebersprungen++; return; }
                             const old = inventory.getItem(vereinId, zielId);
+                            let codeChanged = false;
+                            if (qr && inventory.codeOf(old.id) !== qr) { inventory.assignCode(vereinId, old.id, qr); byQr.set(qr, old.id); codeChanged = true; }
                             // Nur ausgefüllte Felder überschreiben, alles andere bleibt wie es ist
                             const merged = {};
                             for (const f of inventory.FIELDS) merged[f.key] = d[f.key] !== undefined && d[f.key] !== null && d[f.key] !== '' ? d[f.key] : old[f.key];
                             const fields = inventory.readFields(merged);
                             const kat = kategorie || { id: old.kategorie_id, name: old.kategorie };
-                            if (inventory.update(vereinId, req.user.id, old, kat, fields)) result.aktualisiert++;
+                            if (inventory.update(vereinId, req.user.id, old, kat, fields) || codeChanged) result.aktualisiert++;
                             else result.uebersprungen++;
                         } else {
                             const fields = inventory.readFields(d);
-                            const { id } = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, deviceId);
+                            const { id } = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, deviceId, qr);
+                            if (qr) byQr.set(qr, id);
                             const created = db.prepare(`SELECT device_id FROM equipment WHERE id = ?`).get(id);
                             byDeviceId.set(created.device_id.toLowerCase(), id);
                             result.neu++;

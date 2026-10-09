@@ -1,6 +1,6 @@
 {
   "name": "equiply",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Equipment-Verwaltung für Vereine: Inventar, TÜV, Ausleihe, Fotos, Kommentare, Excel-Import",
   "license": "ISC",
   "author": "",
@@ -12,7 +12,8 @@
     "test": "node --test",
     "build:css": "tailwindcss -i styles/app.css -o public/app.css --minify",
     "watch:css": "tailwindcss -i styles/app.css -o public/app.css --watch",
-    "package": "git archive --format=tar.gz --prefix=equiply/ -o equiply-$npm_package_version.tar.gz HEAD"
+    "package": "git archive --format=tar.gz --prefix=equiply/ -o equiply-$npm_package_version.tar.gz HEAD",
+    "vendor": "node -e \"const v=require('jsqr/package.json').version;require('fs').writeFileSync('public/vendor/jsQR.js','/*! jsQR '+v+' | Apache-2.0 | https://github.com/cozmo/jsQR */\\n'+require('fs').readFileSync(require.resolve('jsqr/dist/jsQR.js')))\""
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -26,6 +27,7 @@
     "node": ">=20.12"
   },
   "devDependencies": {
+    "jsqr": "^1.4.0",
     "tailwindcss": "^3.4.19"
   },
   "overrides": {

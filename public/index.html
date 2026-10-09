@@ -72,6 +72,7 @@
                 </div>
             </div>
             <nav class="flex items-center gap-1">
+                <button data-action="open-scanner" class="btn-primary px-3" title="QR-Code scannen"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 8h3v3H7zM14 8h3v3h-3zM7 14h3v3H7zM14 14h3v3h-3z"/></svg><span class="hidden sm:inline">Scannen</span></button>
                 <button data-action="open-import" data-perm="can_manage_items" class="btn-outline hidden md:inline-flex" title="Excel/CSV importieren">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0-12l-4 4m4-4l4 4"/></svg>Import
                 </button>
@@ -156,7 +157,8 @@
             <h2 id="item-title" class="font-extrabold text-xl">Gerät</h2>
             <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
         </div>
-        <input type="hidden" name="id">
+        <input type="hidden" name="id"><input type="hidden" name="qr_code">
+        <div id="item-qr-note" hidden class="bg-ozean-leicht text-ozean-tief rounded-xl p-3 text-sm font-medium mb-4"></div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="sm:col-span-2"><label class="label">Bezeichnung *</label><input name="name" class="input" required maxlength="100" placeholder="z. B. 12 L Stahlflasche"></div>
             <div><label class="label">Kategorie</label><select name="kategorie_id" class="input" id="item-kategorie"></select></div>
@@ -318,6 +320,69 @@
         <div class="flex gap-3 mt-6">
             <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
             <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- QR-Scanner -->
+<div id="scan-modal" class="overlay" hidden>
+    <div class="dialog max-w-md">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="font-extrabold text-xl">QR-Code scannen</h2>
+            <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
+        </div>
+        <div id="scan-live" hidden>
+            <div class="relative rounded-xl overflow-hidden bg-slate-900 aspect-square">
+                <video id="scan-video" playsinline muted class="w-full h-full object-cover"></video>
+                <div class="absolute inset-[18%] border-4 border-white/80 rounded-2xl pointer-events-none"></div>
+            </div>
+            <p class="text-sm text-slate-500 mt-2 text-center">Kamera auf den QR-Code richten.</p>
+        </div>
+        <div id="scan-photo" class="text-center">
+            <p id="scan-photo-hint" class="text-sm text-slate-500 mb-3">Fotografiere den QR-Code – Equiply erkennt ihn automatisch.</p>
+            <label class="btn-primary w-full py-3 cursor-pointer">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Foto vom QR-Code aufnehmen<input type="file" accept="image/*" capture="environment" data-change="scan-photo" class="sr-only">
+            </label>
+        </div>
+        <div id="scan-status" class="text-sm text-center font-medium mt-3 min-h-[1.25rem]"></div>
+        <form data-form="scan-manual" class="flex gap-2 mt-4 pt-4 border-t border-slate-100">
+            <input name="code" class="input font-mono uppercase" placeholder="Code eintippen, z. B. K7F3X9" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="40" required>
+            <button class="btn-dark">Öffnen</button>
+        </form>
+    </div>
+</div>
+
+<!-- Freien QR-Code zuordnen -->
+<div id="code-modal" class="overlay" hidden>
+    <div class="dialog max-w-md">
+        <h2 class="font-extrabold text-xl mb-1">QR-Code <span id="code-modal-code" class="font-mono"></span></h2>
+        <p class="text-sm text-slate-500 mb-5">Dieser Code ist noch keinem Gerät zugeordnet.</p>
+        <button data-action="code-new-item" class="btn-primary w-full py-3">Neues Gerät mit diesem Code anlegen</button>
+        <div class="mt-6">
+            <label class="label">Oder einem vorhandenen Gerät zuordnen</label>
+            <input data-input="code-assign-search" class="input" placeholder="Gerät suchen: Name oder Nummer">
+            <div id="code-assign-list" class="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl mt-2"></div>
+            <p class="text-xs text-slate-500 mt-2">Der bisherige Code dieses Geräts wird dabei frei.</p>
+        </div>
+        <button type="button" data-action="close" class="btn-light w-full py-3 mt-5">Abbrechen</button>
+    </div>
+</div>
+
+<!-- Anderen QR-Code für ein Gerät -->
+<div id="qr-change-modal" class="overlay" hidden>
+    <form data-form="qr-change" class="dialog max-w-sm">
+        <h2 class="font-extrabold text-xl mb-1">Anderen QR-Code zuordnen</h2>
+        <p class="text-sm text-slate-500 mb-5">Z. B. wenn ein schon gelasertes Schild an dieses Gerät kommt. Der bisherige Code wird frei.</p>
+        <input type="hidden" name="id">
+        <label class="label">Code vom Schild</label>
+        <div class="flex gap-2">
+            <input name="code" class="input font-mono uppercase" required maxlength="40" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="z. B. K7F3X9">
+            <button type="button" data-action="scan-for-change" class="btn-outline" title="Scannen">Scannen</button>
+        </div>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Zuordnen</button>
         </div>
     </form>
 </div>

@@ -1,6 +1,8 @@
 // Datenbank-Migrationen. Jede Migration läuft genau einmal und in einer Transaktion.
 // Neue Änderungen am Schema immer als NEUE Migration hinten anhängen – bestehende nie verändern.
 
+const { generateCode } = require('./util');
+
 const NOW = `(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
 const ISO_DATE = `GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`;
 
@@ -261,6 +263,28 @@ module.exports = [
                 if (!r.device_id.startsWith(r.prefix) || !/^[0-9]{2}$/.test(rest)) continue;
                 const neu = r.prefix + '0' + rest;
                 if (!taken.get(r.verein_id, neu)) update.run(neu, r.id);
+            }
+        },
+    },
+    {
+        version: 5,
+        name: 'Feste QR-Codes pro Gerät (unabhängig von Nummer und Kategorie), Adresse für QR-Codes',
+        up(db) {
+            db.exec(`
+                ALTER TABLE vereine ADD COLUMN qr_url TEXT;
+
+                -- Ein QR-Code ändert sich nie. Wird das Gerät gelöscht, wird der Code frei und kann neu zugewiesen werden.
+                CREATE TABLE qr_codes (
+                    code          TEXT PRIMARY KEY CHECK (length(code) BETWEEN 4 AND 12),
+                    verein_id     INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    equipment_id  INTEGER UNIQUE REFERENCES equipment(id) ON DELETE SET NULL,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW}
+                );
+                CREATE INDEX idx_qr_codes_verein ON qr_codes(verein_id);
+            `);
+            const insert = db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id) VALUES (?, ?, ?)`);
+            for (const e of db.prepare(`SELECT id, verein_id FROM equipment`).all()) {
+                while (insert.run(generateCode(), e.verein_id, e.id).changes === 0) { /* Code schon vergeben -> neuer Versuch */ }
             }
         },
     },

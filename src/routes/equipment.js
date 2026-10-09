@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const QRCode = require('qrcode');
 const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage } = require('../util');
 const { requirePermission } = require('../session');
 
@@ -55,7 +54,8 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
                a.borrower, a.rueckgabe_geplant AS returnDate, a.ausgeliehen_am,
                (SELECT b.id FROM bilder b WHERE b.equipment_id = e.id ORDER BY b.id LIMIT 1) AS bild_id,
                (SELECT COUNT(*) FROM bilder b WHERE b.equipment_id = e.id) AS bilder_anzahl,
-               (SELECT COUNT(*) FROM kommentare c WHERE c.equipment_id = e.id) AS kommentare_anzahl
+               (SELECT COUNT(*) FROM kommentare c WHERE c.equipment_id = e.id) AS kommentare_anzahl,
+               (SELECT qc.code FROM qr_codes qc WHERE qc.equipment_id = e.id) AS qr_code
         FROM equipment e
         JOIN kategorien k ON k.id = e.kategorie_id
         LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
@@ -89,7 +89,7 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
     app.post('/api/equipment', ...canManageItems, (req, res) => {
         const kategorie = inventory.getCategory(req.user.verein_id, req.body.kategorie_id);
         const fields = inventory.readFields(req.body);
-        const result = db.transaction(() => inventory.create(req.user.verein_id, req.user.id, kategorie, fields))();
+        const result = db.transaction(() => inventory.create(req.user.verein_id, req.user.id, kategorie, fields, null, req.body.qr_code || null))();
         res.status(201).json(result);
     });
 
@@ -107,7 +107,8 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
         const files = db.prepare(`SELECT datei FROM bilder WHERE equipment_id = ?`).all(item.id);
         db.transaction(() => {
             db.prepare(`DELETE FROM equipment WHERE id = ?`).run(item.id);
-            log(req.user.verein_id, req.user.id, null, 'geloescht', `${item.name} (${item.device_id}) gelöscht`);
+            const code = inventory.codeOf(item.id);
+            log(req.user.verein_id, req.user.id, null, 'geloescht', `${item.name} (${item.device_id}) gelöscht${code ? ` – QR-Code ${code} ist jetzt frei` : ''}`);
         })();
         for (const f of files) fs.rm(path.join(config.uploadDir, f.datei), { force: true }, () => {});
         res.json({ message: 'Gelöscht.' });
@@ -223,15 +224,5 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
         if (c.nutzer_id !== req.user.id && !req.user.permissions.can_manage_items) throw new HttpError(403, 'Du kannst nur eigene Kommentare löschen.');
         db.prepare(`DELETE FROM kommentare WHERE id = ?`).run(c.id);
         res.json({ message: 'Kommentar gelöscht.' });
-    });
-
-    // --- QR-Code fürs Etikett: führt direkt zur Detailansicht des Geräts ---
-    app.get('/api/equipment/:id/qr.svg', authenticate, async (req, res) => {
-        const item = inventory.getItem(req.user.verein_id, req.params.id);
-        // Enthält die Inventarnummer statt der internen ID: Wird ein Gerät gelöscht und die Nummer neu vergeben,
-        // passt das alte Etikett zum neuen Gerät.
-        const url = `${req.protocol}://${req.get('host')}/#nr/${encodeURIComponent(item.device_id)}`;
-        const svg = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
-        res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'private, max-age=86400' }).send(svg);
     });
 };

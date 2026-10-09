@@ -13,7 +13,8 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 - **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
 - **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
 - **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
-- **QR-Etiketten** zum Ausdrucken (A4-Bögen 3 × 7) – Scannen mit dem Handy öffnet direkt das Gerät. Der Code enthält die Inventarnummer, Etiketten bleiben also gültig, wenn die Nummer neu vergeben wird
+- **Feste QR-Codes** pro Gerät (z. B. `K7F3X9`) – ändern sich nie, auch nicht bei neuer Kategorie oder Nummer; ideal zum Lasern/Gravieren. Codes gelöschter Geräte werden frei und können neu zugeordnet werden, freie Codes lassen sich vorab erzeugen. Download als SVG zum Lasern, Etiketten für A4-Bögen (3 × 7)
+- **Eingebauter QR-Scanner** (Kamera oder Foto), erkennt auch helle Codes auf dunklem Metall
 - **Eigene Kategorien** mit eigenem Nummernkreis (z. B. 1001–1999, bis zu 999 Geräte pro Kategorie; Nummern gelöschter Geräte werden wiederverwendet)
 - **Vereinslogo und -farbe:** Logo hochladen, die Oberfläche übernimmt automatisch die Farbe
 - **Mitglieder & Rollen** mit feinen Rechten (Ausleihe, Inventar, Team)
@@ -72,6 +73,12 @@ rsync -a /var/lib/equiply/backups/uploads/ /var/lib/equiply/uploads/
 chown -R equiply:equiply /var/lib/equiply
 systemctl start equiply
 ```
+
+### QR-Codes dauerhaft gültig halten
+
+In jedem QR-Code steht die Adresse des Servers plus der feste Code des Geräts (z. B. `https://equiply.meinverein.de/q/K7F3X9`).
+**Bevor Schilder gelasert werden**, unter *Einstellungen → Verein → Adresse für QR-Codes* die dauerhafte Adresse eintragen
+(am besten eine eigene Domain). Ändert sich die Adresse später doch, erkennt der eingebaute Scanner in Equiply die Schilder trotzdem.
 
 ### Nützliche Befehle
 

@@ -77,7 +77,7 @@ module.exports = function authRoutes(app, { db, config, sessions, limiter, log, 
         const u = req.user;
         startSession(req, res, u); // Sitzung verlängern, solange die App benutzt wird
         res.json({ id: u.id, username: u.username, email: u.email, role: u.role, permissions: u.permissions,
-            verein: { id: u.verein_id, name: u.verein_name, farbe: u.verein_farbe, logo: u.verein_logo ? `/api/verein/logo?v=${u.verein_logo}` : null } });
+            verein: { id: u.verein_id, name: u.verein_name, farbe: u.verein_farbe, logo: u.verein_logo ? `/api/verein/logo?v=${u.verein_logo}` : null, qr_url: u.verein_qr_url } });
     });
 
     app.put('/api/me/password', authenticate, async (req, res) => {

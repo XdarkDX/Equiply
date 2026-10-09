@@ -56,6 +56,7 @@ function createApp(db, config) {
     require('./routes/team')(app, ctx);
     require('./routes/equipment')(app, ctx);
     require('./routes/transfer')(app, ctx);
+    require('./routes/qr')(app, ctx);
 
     app.use('/api', (req, res) => res.status(404).json({ error: 'Endpunkt nicht gefunden.' }));
     app.use(express.static(PUBLIC_DIR, { index: 'index.html', setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));

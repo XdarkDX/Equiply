@@ -1,12 +1,13 @@
 // Liest Excel- (.xlsx) und CSV-Dateien und erkennt die Spalten automatisch.
 const ExcelJS = require('exceljs');
-const { HttpError, normalizeKey } = require('./util');
+const { HttpError, normalizeKey, normalizeCode, isValidCode } = require('./util');
 
 const MAX_ROWS = 5000;
 
 // Spaltenüberschriften (normalisiert) -> Feld
 const HEADER_SYNONYMS = {
-    deviceId: ['inventarnummer', 'inventarnr', 'invnr', 'inventar', 'nummer', 'nr', 'id', 'systemid', 'geraetenummer', 'geraetenr', 'geraeteid', 'kennung', 'code'],
+    deviceId: ['inventarnummer', 'inventarnr', 'invnr', 'inventar', 'nummer', 'nr', 'id', 'systemid', 'geraetenummer', 'geraetenr', 'geraeteid', 'kennung'],
+    qr_code: ['qrcode', 'qr', 'qrid', 'qrkennung', 'qrcodeid', 'code'],
     name: ['bezeichnung', 'name', 'geraet', 'geraetename', 'artikel', 'artikelname', 'gegenstand', 'equipment', 'titel', 'item', 'produkt', 'modell'],
     kategorie: ['kategorie', 'kategorien', 'typ', 'art', 'gruppe', 'category', 'geraetetyp', 'geraeteart'],
     hersteller: ['hersteller', 'marke', 'brand', 'manufacturer', 'fabrikat'],
@@ -19,7 +20,7 @@ const HEADER_SYNONYMS = {
     notes: ['notizen', 'notiz', 'bemerkung', 'bemerkungen', 'kommentar', 'kommentare', 'anmerkung', 'anmerkungen', 'info', 'hinweis', 'notes', 'beschreibung'],
 };
 // Teilwörter, falls keine exakte Übereinstimmung gefunden wurde
-const HEADER_CONTAINS = [['tuev', 'tuev'], ['pruef', 'tuev'], ['wartung', 'tuev'], ['serien', 'seriennummer'], ['inventar', 'deviceId'],
+const HEADER_CONTAINS = [['qrcode', 'qr_code'], ['tuev', 'tuev'], ['pruef', 'tuev'], ['wartung', 'tuev'], ['serien', 'seriennummer'], ['inventar', 'deviceId'],
     ['bezeichnung', 'name'], ['kategorie', 'kategorie'], ['hersteller', 'hersteller'], ['lagerort', 'lagerort'], ['standort', 'lagerort'],
     ['zustand', 'condition'], ['bemerk', 'notes'], ['notiz', 'notes'], ['groesse', 'groesse']];
 
@@ -214,7 +215,7 @@ function makeCategoryResolver(categories) {
  * Liest die Datei und bereitet jede Zeile auf.
  * existing: Map deviceId -> id und Map seriennummer -> id (der Geräte im Verein)
  */
-async function buildPreview(buffer, { categories, existingByDeviceId, existingBySerial }) {
+async function buildPreview(buffer, { categories, existingByDeviceId, existingBySerial, existingByQr = new Map() }) {
     const rows = await readFile(buffer);
     if (!rows.length) throw new HttpError(400, 'Die Datei ist leer.');
     const { row: headerRow, mapping, ignored } = detectColumns(rows);
@@ -223,6 +224,7 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
 
     const resolveCategory = makeCategoryResolver(categories);
     const seenDeviceIds = new Map();
+    const seenQr = new Map();
     const newCategories = new Set();
     const get = (r, field) => (mapping[field] ? r.values[mapping[field].col] ?? null : undefined);
 
@@ -237,6 +239,11 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
         }
         if (mapping.notes) daten.notes = toText(get(r, 'notes'), 2000);
         if (mapping.deviceId) daten.deviceId = toText(get(r, 'deviceId'), 30);
+        if (mapping.qr_code) {
+            const raw = toText(get(r, 'qr_code'), 30);
+            daten.qr_code = raw ? normalizeCode(raw) : null;
+            if (raw && !isValidCode(daten.qr_code)) fehler.push(`QR-Code „${raw}“ ist ungültig`);
+        }
         daten.name = toText(get(r, 'name'), 100);
 
         for (const field of ['tuev']) {
@@ -266,7 +273,14 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
         if (!daten.name) fehler.push('Bezeichnung fehlt');
 
         let aktion = 'neu', zielId = null;
-        if (daten.deviceId) {
+        if (daten.qr_code) {
+            if (seenQr.has(daten.qr_code)) fehler.push(`QR-Code ${daten.qr_code} kommt doppelt vor (auch Zeile ${seenQr.get(daten.qr_code)})`);
+            seenQr.set(daten.qr_code, r.nr);
+        }
+        // Zuordnung zu vorhandenen Geräten: zuerst über den festen QR-Code, dann Inventarnummer, dann Seriennummer
+        if (daten.qr_code && existingByQr.has(daten.qr_code)) {
+            zielId = existingByQr.get(daten.qr_code);
+        } else if (daten.deviceId) {
             const key = daten.deviceId.toLowerCase();
             if (seenDeviceIds.has(key)) fehler.push(`Inventarnummer ${daten.deviceId} kommt doppelt vor (auch Zeile ${seenDeviceIds.get(key)})`);
             seenDeviceIds.set(key, r.nr);

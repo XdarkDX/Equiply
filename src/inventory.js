@@ -1,6 +1,6 @@
 // Gemeinsame Inventar-Logik für Formular-API und Excel-Import
 const MAX_PER_CATEGORY = 999;
-const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalText, optionalDate, requireOneOf, requireId, formatDate } = require('./util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalText, optionalDate, requireOneOf, requireId, formatDate, generateCode, normalizeCode, isValidCode } = require('./util');
 
 // Felder, die man bearbeiten kann, mit Anzeigenamen (für Protokoll, Export und Import)
 const FIELDS = [
@@ -29,6 +29,11 @@ function createInventory(db) {
         update: db.prepare(`UPDATE equipment SET kategorie_id = @kategorie_id, device_id = @device_id, name = @name, hersteller = @hersteller, seriennummer = @seriennummer, groesse = @groesse,
                             lagerort = @lagerort, tuev = @tuev, condition = @condition, notes = @notes WHERE id = @id`),
         byId: db.prepare(`SELECT e.*, k.name AS kategorie FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.id = ? AND e.verein_id = ?`),
+        codeByCode: db.prepare(`SELECT code, verein_id, equipment_id FROM qr_codes WHERE code = ?`),
+        codeOfItem: db.prepare(`SELECT code FROM qr_codes WHERE equipment_id = ?`),
+        insertCode: db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id) VALUES (?, ?, ?)`),
+        assignCode: db.prepare(`UPDATE qr_codes SET equipment_id = ? WHERE code = ?`),
+        releaseItem: db.prepare(`UPDATE qr_codes SET equipment_id = NULL WHERE equipment_id = ?`),
         log: db.prepare(`INSERT INTO aktivitaeten (verein_id, nutzer_id, equipment_id, aktion, details) VALUES (?, ?, ?, ?, ?)`),
     };
 
@@ -91,16 +96,53 @@ function createInventory(db) {
         return out;
     }
 
-    function create(vereinId, userId, kategorie, fields, deviceId = null) {
+    // ---------- Feste QR-Codes ----------
+    // Erzeugt einen neuen, zufälligen Code (optional direkt einem Gerät zugeordnet)
+    function newCode(vereinId, equipmentId = null) {
+        for (;;) {
+            const code = generateCode();
+            if (q.insertCode.run(code, vereinId, equipmentId).changes) return code;
+        }
+    }
+
+    // Prüft einen eingegebenen/gescannten Code: liefert { code, row } oder wirft einen verständlichen Fehler
+    function checkCode(vereinId, raw, equipmentId = null) {
+        const code = normalizeCode(raw);
+        if (!isValidCode(code)) throw new HttpError(400, `„${raw}“ ist kein gültiger QR-Code.`);
+        const row = q.codeByCode.get(code);
+        if (row && row.verein_id !== vereinId) throw new HttpError(409, `QR-Code ${code} gehört zu einem anderen Verein.`);
+        if (row && row.equipment_id && row.equipment_id !== equipmentId) throw new HttpError(409, `QR-Code ${code} ist schon einem anderen Gerät zugeordnet.`);
+        return { code, row };
+    }
+
+    // Ordnet einem Gerät einen bestimmten Code zu (freier Code oder ein noch unbekannter, z. B. von einem fertigen Schild).
+    // Der bisherige Code des Geräts wird dabei frei.
+    function assignCode(vereinId, equipmentId, raw) {
+        const { code, row } = checkCode(vereinId, raw, equipmentId);
+        const old = q.codeOfItem.get(equipmentId);
+        q.releaseItem.run(equipmentId);
+        if (row) q.assignCode.run(equipmentId, code);
+        else q.insertCode.run(code, vereinId, equipmentId);
+        return { code, old: old ? old.code : null };
+    }
+
+    function codeOf(equipmentId) {
+        const row = q.codeOfItem.get(equipmentId);
+        return row ? row.code : null;
+    }
+
+    function create(vereinId, userId, kategorie, fields, deviceId = null, qrCode = null) {
         if (deviceId) {
             deviceId = requireText(String(deviceId), 'Inventarnummer', 30);
             if (q.deviceIdTaken.get(vereinId, deviceId)) throw new HttpError(409, `Inventarnummer ${deviceId} ist schon vergeben.`);
         } else {
             deviceId = nextDeviceId(vereinId, kategorie);
         }
+        if (qrCode) checkCode(vereinId, qrCode); // vor dem Anlegen prüfen, damit kein halbes Gerät entsteht
         const id = Number(q.insert.run({ ...fields, verein_id: vereinId, kategorie_id: kategorie.id, device_id: deviceId }).lastInsertRowid);
-        log(vereinId, userId, id, 'erstellt', `${fields.name} (${deviceId}) angelegt`);
-        return { id, deviceId };
+        const code = qrCode ? assignCode(vereinId, id, qrCode).code : newCode(vereinId, id);
+        log(vereinId, userId, id, 'erstellt', `${fields.name} (${deviceId}) angelegt – QR-Code ${code}`);
+        return { id, deviceId, qrCode: code };
     }
 
     function display(key, value) {
@@ -138,7 +180,7 @@ function createInventory(db) {
         return item;
     }
 
-    return { FIELDS, log, getCategory, createCategory, validatePrefix, suggestPrefix, nextDeviceId, readFields, create, update, getItem, categories: (v) => q.kategorien.all(v) };
+    return { FIELDS, log, newCode, checkCode, assignCode, codeOf, getCategory, createCategory, validatePrefix, suggestPrefix, nextDeviceId, readFields, create, update, getItem, categories: (v) => q.kategorien.all(v) };
 }
 
 module.exports = { createInventory, FIELDS };

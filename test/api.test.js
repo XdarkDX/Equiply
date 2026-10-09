@@ -174,9 +174,72 @@ test('QR-Code fürs Etikett', async () => {
     assert.equal(r.status, 200);
     assert.match(r.headers.get('content-type'), /image\/svg\+xml/);
     assert.match(r.body.toString(), /<svg/);
+    const code = (await admin.get(`/api/equipment/${ids.lampe}`)).body.qr_code;
+    assert.match(code, /^[0-9A-Z]{6}$/);
     const QR = require('qrcode');
-    const expected = await QR.toString(`${srv.base.replace('http://', 'http://')}/#nr/6001`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
-    assert.equal(r.body.toString(), expected, 'QR enthält die Inventarnummer, nicht die interne ID');
+    const expected = await QR.toString(`${srv.base}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+    assert.equal(r.body.toString(), expected, 'QR enthält den festen Code');
+});
+
+test('Feste QR-Codes: bleiben bei Kategoriewechsel gleich, werden nach dem Löschen frei und neu zuweisbar', async () => {
+    const neu = async (name, extra = {}) => (await admin.post('/api/equipment', { name, kategorie_id: ids.flaschen, ...extra })).body;
+    const a = await neu('QR-Test A');
+    assert.match(a.qrCode, /^[0-9A-Z]{6}$/);
+
+    // Kategorie wechseln: Nummer ändert sich, QR-Code nicht
+    const item = (await admin.get(`/api/equipment/${a.id}`)).body;
+    await admin.put(`/api/equipment/${a.id}`, { ...item, kategorie_id: ids.lampen });
+    const moved = (await admin.get(`/api/equipment/${a.id}`)).body;
+    assert.notEqual(moved.deviceId, a.deviceId);
+    assert.equal(moved.qr_code, a.qrCode);
+    assert.deepEqual((await admin.get(`/api/qr/${a.qrCode}`)).body, { code: a.qrCode, status: 'zugeordnet', equipment_id: a.id });
+
+    // Gelöscht -> Code frei -> neues Gerät mit dem alten (gelaserten) Code anlegen
+    await admin.del(`/api/equipment/${a.id}`);
+    assert.equal((await admin.get(`/api/qr/${a.qrCode}`)).body.status, 'frei');
+    const b = await neu('Ersatz für A', { qr_code: a.qrCode.toLowerCase() });
+    assert.equal(b.qrCode, a.qrCode, 'Kleinschreibung wird akzeptiert');
+    assert.equal((await admin.get(`/api/qr/${a.qrCode}`)).body.equipment_id, b.id);
+
+    // Belegter Code kann nicht doppelt vergeben werden
+    const c = await neu('QR-Test C');
+    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: a.qrCode })).status, 409);
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, qr_code: a.qrCode })).status, 409);
+    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: 'xx' })).status, 400);
+
+    // Freie Codes vorab erzeugen (zum Lasern) und später zuweisen; der alte Code wird frei
+    const frei = (await admin.post('/api/qr/frei', { anzahl: 3 })).body.codes;
+    assert.equal(frei.length, 3);
+    assert.ok((await admin.get('/api/qr/frei')).body.some(f => f.code === frei[0]));
+    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: frei[0] })).status, 200);
+    assert.equal((await admin.get(`/api/qr/${c.qrCode}`)).body.status, 'frei');
+    assert.equal((await admin.get(`/api/qr/${frei[0]}`)).body.equipment_id, c.id);
+    assert.equal((await admin.del(`/api/qr/frei/${frei[1]}`)).status, 200);
+    assert.equal((await admin.del(`/api/qr/frei/${frei[0]}`)).status, 404, 'zugeordnete Codes nicht löschbar');
+
+    // Unbekannter Code (z. B. fremdes Schild) und Verwechslungs-Korrektur O->0, I/L->1
+    assert.equal((await admin.get('/api/qr/ZZZZ99')).body.status, 'unbekannt');
+    assert.equal((await admin.get(`/api/qr/${frei[2].replace(/0/g, 'o').replace(/1/g, 'l')}`)).body.code, frei[2]);
+
+    for (const x of [b, c]) await admin.del(`/api/equipment/${x.id}`);
+});
+
+test('QR-Link /q/CODE, feste Adresse für QR-Codes und SVG-Download', async () => {
+    const r = await fetch(`${srv.base}/q/ab-c1o9`, { redirect: 'manual' });
+    assert.equal(r.status, 302);
+    assert.equal(r.headers.get('location'), '/#q/ABC109');
+
+    const code = (await admin.get(`/api/equipment/${ids.flasche}`)).body.qr_code;
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'equiply.tc-nord.de/' })).status, 200);
+    assert.equal((await admin.get('/api/me')).body.verein.qr_url, 'http://equiply.tc-nord.de');
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'https://equiply.tc-nord.de/' })).status, 200);
+    const QR = require('qrcode');
+    const svg = await admin.get(`/api/qr/${code}/svg?download=1`);
+    assert.equal(svg.body.toString(), await QR.toString(`https://equiply.tc-nord.de/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
+    assert.match(svg.headers.get('content-disposition'), new RegExp(`equiply-qr-${code}\\.svg`));
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'javascript:alert(1)' })).status, 400);
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: '' })).status, 200);
+    assert.equal((await admin.get('/api/me')).body.verein.qr_url, null);
 });
 
 test('Inventarnummern: kleinste freie Nummer wird wiederverwendet, Kategoriewechsel vergibt neue Nummer', async () => {
