@@ -169,77 +169,86 @@ test('Kommentare: jeder darf schreiben, nur eigene löschen', async () => {
     assert.equal((await admin.post(`/api/equipment/${ids.lampe}/kommentare`, { text: '   ' })).status, 400);
 });
 
-test('QR-Code fürs Etikett', async () => {
-    const r = await admin.get(`/api/equipment/${ids.lampe}/qr.svg`);
-    assert.equal(r.status, 200);
-    assert.match(r.headers.get('content-type'), /image\/svg\+xml/);
-    assert.match(r.body.toString(), /<svg/);
-    const code = (await admin.get(`/api/equipment/${ids.lampe}`)).body.qr_code;
-    assert.match(code, /^[0-9A-Z]{6}$/);
-    const QR = require('qrcode');
-    const expected = await QR.toString(`${srv.base}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
-    assert.equal(r.body.toString(), expected, 'QR enthält den festen Code');
-});
-
-test('Feste QR-Codes: bleiben bei Kategoriewechsel gleich, werden nach dem Löschen frei und neu zuweisbar', async () => {
+test('QR-Codes: neue Geräte haben keinen Code, Code muss zugewiesen werden', async () => {
     const neu = async (name, extra = {}) => (await admin.post('/api/equipment', { name, kategorie_id: ids.flaschen, ...extra })).body;
     const a = await neu('QR-Test A');
-    assert.match(a.qrCode, /^[0-9A-Z]{6}$/);
+    assert.equal(a.qrCode, null, 'kein automatischer Code');
+    assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.qr_code, null);
+    assert.equal((await admin.get(`/api/equipment/${a.id}/qr.png`)).status, 404);
 
-    // Kategorie wechseln: Nummer ändert sich, QR-Code nicht
-    const item = (await admin.get(`/api/equipment/${a.id}`)).body;
-    await admin.put(`/api/equipment/${a.id}`, { ...item, kategorie_id: ids.lampen });
-    const moved = (await admin.get(`/api/equipment/${a.id}`)).body;
-    assert.notEqual(moved.deviceId, a.deviceId);
-    assert.equal(moved.qr_code, a.qrCode);
-    assert.deepEqual((await admin.get(`/api/qr/${a.qrCode}`)).body, { code: a.qrCode, status: 'zugeordnet', equipment_id: a.id });
-
-    // Gelöscht -> Code frei -> neues Gerät mit dem alten (gelaserten) Code anlegen
+    // Neuen Code zuweisen
+    const r = await admin.put(`/api/equipment/${a.id}/qr`, { neu: true });
+    assert.equal(r.status, 200);
+    assert.match(r.body.code, /^[0-9A-Z]{6}$/);
+    assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.qr_code, r.body.code);
+    assert.equal((await helfer.put(`/api/equipment/${a.id}/qr`, { neu: true })).status, 403, 'nur mit Inventar-Recht');
     await admin.del(`/api/equipment/${a.id}`);
-    assert.equal((await admin.get(`/api/qr/${a.qrCode}`)).body.status, 'frei');
-    const b = await neu('Ersatz für A', { qr_code: a.qrCode.toLowerCase() });
-    assert.equal(b.qrCode, a.qrCode, 'Kleinschreibung wird akzeptiert');
-    assert.equal((await admin.get(`/api/qr/${a.qrCode}`)).body.equipment_id, b.id);
-
-    // Belegter Code kann nicht doppelt vergeben werden
-    const c = await neu('QR-Test C');
-    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: a.qrCode })).status, 409);
-    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, qr_code: a.qrCode })).status, 409);
-    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: 'xx' })).status, 400);
-
-    // Freie Codes vorab erzeugen (zum Lasern) und später zuweisen; der alte Code wird frei
-    const frei = (await admin.post('/api/qr/frei', { anzahl: 3 })).body.codes;
-    assert.equal(frei.length, 3);
-    assert.ok((await admin.get('/api/qr/frei')).body.some(f => f.code === frei[0]));
-    assert.equal((await admin.put(`/api/equipment/${c.id}/qr`, { code: frei[0] })).status, 200);
-    assert.equal((await admin.get(`/api/qr/${c.qrCode}`)).body.status, 'frei');
-    assert.equal((await admin.get(`/api/qr/${frei[0]}`)).body.equipment_id, c.id);
-    assert.equal((await admin.del(`/api/qr/frei/${frei[1]}`)).status, 200);
-    assert.equal((await admin.del(`/api/qr/frei/${frei[0]}`)).status, 404, 'zugeordnete Codes nicht löschbar');
-
-    // Unbekannter Code (z. B. fremdes Schild) und Verwechslungs-Korrektur O->0, I/L->1
-    assert.equal((await admin.get('/api/qr/ZZZZ99')).body.status, 'unbekannt');
-    assert.equal((await admin.get(`/api/qr/${frei[2].replace(/0/g, 'o').replace(/1/g, 'l')}`)).body.code, frei[2]);
-
-    for (const x of [b, c]) await admin.del(`/api/equipment/${x.id}`);
 });
 
-test('QR-Link /q/CODE, feste Adresse für QR-Codes und SVG-Download', async () => {
+test('QR-Codes: Vorrats-Code zuweisen verbraucht ihn, es entsteht kein neuer', async () => {
+    const vorrat = (await admin.post('/api/qr/frei', { anzahl: 3 })).body.codes;
+    const freiVorher = (await admin.get('/api/qr/frei')).body.length;
+    const b = (await admin.post('/api/equipment', { name: 'QR-Test B', kategorie_id: ids.flaschen })).body;
+    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: vorrat[0].toLowerCase() })).status, 200);
+    const freiNachher = (await admin.get('/api/qr/frei')).body;
+    assert.equal(freiNachher.length, freiVorher - 1, 'genau ein freier Code weniger');
+    assert.ok(!freiNachher.some(f => f.code === vorrat[0]));
+
+    // Gerät mit Vorrats-Code direkt anlegen (gescanntes Schild)
+    const c = (await admin.post('/api/equipment', { name: 'QR-Test C', kategorie_id: ids.flaschen, qr_code: vorrat[1] })).body;
+    assert.equal(c.qrCode, vorrat[1]);
+    assert.equal((await admin.get('/api/qr/frei')).body.length, freiVorher - 2);
+
+    // Belegte Codes nicht doppelt
+    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: vorrat[1] })).status, 409);
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, qr_code: vorrat[0] })).status, 409);
+    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: 'xx' })).status, 400);
+
+    // Kategorie wechseln: Nummer neu, Code bleibt
+    const item = (await admin.get(`/api/equipment/${b.id}`)).body;
+    await admin.put(`/api/equipment/${b.id}`, { ...item, kategorie_id: ids.lampen });
+    const moved = (await admin.get(`/api/equipment/${b.id}`)).body;
+    assert.notEqual(moved.deviceId, item.deviceId);
+    assert.equal(moved.qr_code, vorrat[0]);
+
+    // Code lösen -> wieder frei; Gerät löschen -> Code frei
+    assert.equal((await admin.del(`/api/equipment/${b.id}/qr`)).status, 200);
+    assert.equal((await admin.get(`/api/qr/${vorrat[0]}`)).body.status, 'frei');
+    assert.equal((await admin.del(`/api/equipment/${b.id}/qr`)).status, 404);
+    await admin.del(`/api/equipment/${c.id}`);
+    assert.equal((await admin.get(`/api/qr/${vorrat[1]}`)).body.status, 'frei');
+
+    // Unbekannter Code und Verwechslungs-Korrektur O->0, I/L->1
+    assert.equal((await admin.get('/api/qr/ZZZZ99')).body.status, 'unbekannt');
+    assert.equal((await admin.get(`/api/qr/${vorrat[2].replace(/0/g, 'o').replace(/1/g, 'l')}`)).body.code, vorrat[2]);
+    await admin.del(`/api/equipment/${b.id}`);
+});
+
+test('QR-Codes: mehreren Geräten ohne Code auf einmal Codes geben', async () => {
+    const x = (await admin.post('/api/equipment', { name: 'Ohne Code 1', kategorie_id: ids.flaschen })).body;
+    const y = (await admin.post('/api/equipment', { name: 'Ohne Code 2', kategorie_id: ids.flaschen })).body;
+    await admin.put(`/api/equipment/${y.id}/qr`, { neu: true });
+    const codeY = (await admin.get(`/api/equipment/${y.id}`)).body.qr_code;
+    const r = (await admin.post('/api/qr/zuweisen', { ids: [x.id, y.id] })).body;
+    assert.equal(r.zugewiesen, 1, 'nur Geräte ohne Code');
+    assert.match((await admin.get(`/api/equipment/${x.id}`)).body.qr_code, /^[0-9A-Z]{6}$/);
+    assert.equal((await admin.get(`/api/equipment/${y.id}`)).body.qr_code, codeY, 'vorhandener Code bleibt');
+    for (const i of [x, y]) await admin.del(`/api/equipment/${i.id}`);
+});
+
+test('QR-Link /q/CODE und QR-Inhalt mit aktueller Adresse', async () => {
     const r = await fetch(`${srv.base}/q/ab-c1o9`, { redirect: 'manual' });
     assert.equal(r.status, 302);
     assert.equal(r.headers.get('location'), '/#q/ABC109');
 
-    const code = (await admin.get(`/api/equipment/${ids.flasche}`)).body.qr_code;
-    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'equiply.tc-nord.de/' })).status, 200);
-    assert.equal((await admin.get('/api/me')).body.verein.qr_url, 'http://equiply.tc-nord.de');
-    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'https://equiply.tc-nord.de/' })).status, 200);
+    const code = (await admin.put(`/api/equipment/${ids.flasche}/qr`, { neu: true })).body.code;
     const QR = require('qrcode');
-    const svg = await admin.get(`/api/qr/${code}/svg?download=1`);
-    assert.equal(svg.body.toString(), await QR.toString(`https://equiply.tc-nord.de/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
-    assert.match(svg.headers.get('content-disposition'), new RegExp(`equiply-qr-${code}\\.svg`));
-    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'javascript:alert(1)' })).status, 400);
-    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: '' })).status, 200);
-    assert.equal((await admin.get('/api/me')).body.verein.qr_url, null);
+    const svg = await admin.get(`/api/equipment/${ids.flasche}/qr.svg`);
+    assert.equal(svg.body.toString(), await QR.toString(`${srv.base}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
+    // Die frühere Einstellung "Adresse für QR-Codes" gibt es nicht mehr
+    await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'https://woanders.de' });
+    assert.equal((await admin.get(`/api/equipment/${ids.flasche}/qr.svg`)).body.toString(), svg.body.toString());
+    assert.equal((await admin.get('/api/me')).body.verein.qr_url, undefined);
 });
 
 test('Inventarnummern: kleinste freie Nummer wird wiederverwendet, Kategoriewechsel vergibt neue Nummer', async () => {
@@ -342,6 +351,7 @@ test('Vereinslogo und -farbe', async () => {
 test('QR-Code als PNG-Bild herunterladen', async () => {
     const kat = (await admin.get('/api/kategorien')).body[0].id;
     const item = (await admin.post('/api/equipment', { name: 'Flasche 12L/rot', kategorie_id: kat })).body;
+    item.qrCode = (await admin.put(`/api/equipment/${item.id}/qr`, { neu: true })).body.code;
     const r = await admin.get(`/api/equipment/${item.id}/qr.png?download=1`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'image/png');
@@ -358,7 +368,10 @@ test('Mehrere QR-Codes als ZIP mit PNG-Bildern', async () => {
     const kat = (await admin.get('/api/kategorien')).body[0].id;
     const a = (await admin.post('/api/equipment', { name: 'ZIP A', kategorie_id: kat })).body;
     const b = (await admin.post('/api/equipment', { name: 'ZIP/B', kategorie_id: kat })).body;
-    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},99999`);
+    const ohne = (await admin.post('/api/equipment', { name: 'Ohne Code', kategorie_id: kat })).body;
+    assert.equal((await admin.get(`/api/qr/bilder.zip?ids=${ohne.id}`)).status, 400, 'Gerät ohne Code');
+    await admin.post('/api/qr/zuweisen', { ids: [a.id, b.id] });
+    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},${ohne.id},99999`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'application/zip');
     const zip = await JSZip.loadAsync(r.body);

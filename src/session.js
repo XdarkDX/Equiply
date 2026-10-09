@@ -16,7 +16,7 @@ function parseCookies(header) {
 function createSessions(db, config) {
     const userById = db.prepare(`
         SELECT n.id, n.verein_id, n.username, n.email, n.role, n.vereins_rolle_id, n.token_version,
-               r.can_manage_users, r.can_manage_items, r.can_borrow_return, v.name AS verein_name, v.farbe AS verein_farbe, v.logo AS verein_logo, v.qr_url AS verein_qr_url
+               r.can_manage_users, r.can_manage_items, r.can_borrow_return, v.name AS verein_name, v.farbe AS verein_farbe, v.logo AS verein_logo
         FROM nutzer n
         JOIN vereine v ON v.id = n.verein_id
         LEFT JOIN vereins_rollen r ON r.id = n.vereins_rolle_id

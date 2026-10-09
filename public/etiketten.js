@@ -31,8 +31,11 @@ async function load() {
     }
 
     const ids = new Set((params.get('ids') || '').split(',').map(Number).filter(Boolean));
-    const items = (await (await fetch('/api/equipment')).json()).filter(i => ids.has(i.id));
-    info.textContent = `${items.length} Etikett${items.length === 1 ? '' : 'en'} für ${me.verein.name}`;
+    const chosen = (await (await fetch('/api/equipment')).json()).filter(i => ids.has(i.id));
+    const items = chosen.filter(i => i.qr_code); // nur Geräte, denen ein QR-Code zugewiesen ist
+    const ohne = chosen.length - items.length;
+    info.textContent = `${items.length} Etikett${items.length === 1 ? '' : 'en'} für ${me.verein.name}`
+        + (ohne ? ` – ${ohne} Gerät${ohne === 1 ? '' : 'e'} ohne QR-Code übersprungen` : '');
     sheet.innerHTML = items.map(i => `
         <div class="label-item">
             <img src="/api/qr/${esc(i.qr_code)}/svg" alt="">

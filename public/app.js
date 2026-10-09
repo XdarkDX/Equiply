@@ -551,7 +551,8 @@ function renderDetail() {
         primaryAction(i, 'py-2.5'),
         can('can_manage_items') ? `<button data-action="edit-item" data-id="${i.id}" class="btn-outline">${ICON.edit}Bearbeiten</button>` : '',
         can('can_manage_items') && tuevStatus(i.tuev) !== 'expired' && i.tuev ? `<button data-action="renew-tuev" data-id="${i.id}" class="btn-outline">TÜV erneuern</button>` : '',
-        `<button data-action="show-qr" data-id="${i.id}" class="btn-outline">${ICON.qr}QR-Code</button>`,
+        i.qr_code ? `<button data-action="show-qr" data-id="${i.id}" class="btn-outline">${ICON.qr}QR-Code</button>`
+            : (can('can_manage_items') ? `<button data-action="assign-qr" data-id="${i.id}" class="btn-outline">${ICON.qr}QR-Code zuweisen</button>` : ''),
         can('can_manage_items') ? `<button data-action="delete-item" data-id="${i.id}" class="btn-outline text-red-600" title="Gerät löschen">${ICON.trash}</button>` : '',
     ].filter(Boolean).join('');
 
@@ -1021,9 +1022,8 @@ function renderCodeAssignList(search) {
 // QR-Codes: zentraler Bereich (Etiketten & Bilder, freie Codes, Adresse)
 // =====================================================================
 function qrTabs() {
-    const tabs = [['etiketten', 'Etiketten & Bilder']];
+    const tabs = [['etiketten', 'Geräte']];
     if (can('can_manage_items')) tabs.push(['frei', 'Freie Codes']);
-    if (state.me.role === 'admin') tabs.push(['adresse', 'Adresse']);
     return tabs;
 }
 
@@ -1051,7 +1051,7 @@ async function renderQrCenter() {
         const existing = new Set(state.items.map(i => i.id));
         for (const id of state.qr.selected) if (!existing.has(id)) state.qr.selected.delete(id);
         body.innerHTML = `
-            <p class="text-sm text-slate-500 mb-4">Geräte auswählen und die QR-Codes als Etiketten drucken oder als Bilder herunterladen. Jedes Gerät behält seinen QR-Code für immer.</p>
+            <p class="text-sm text-slate-500 mb-4">Geräte auswählen und ihre QR-Codes als Etiketten drucken oder als Bilder herunterladen. Geräte ohne QR-Code bekommen erst einen, wenn du ihn zuweist.</p>
             <div class="flex flex-col sm:flex-row gap-2 mb-3">
                 <input data-input="qr-search" class="input" placeholder="Suchen: Name, Nummer, Lagerort" value="${esc(state.qr.search)}">
                 <select data-change="qr-kategorie" class="input sm:w-56">
@@ -1062,6 +1062,7 @@ async function renderQrCenter() {
             <div id="qr-list"></div>
             <div class="flex flex-col sm:flex-row gap-2 mt-4 sm:items-center">
                 <span id="qr-count" class="text-sm text-slate-500 sm:mr-auto"></span>
+                <button data-action="qr-assign-selected" id="qr-assign-selected" hidden class="btn-outline"></button>
                 <button data-action="qr-print" class="btn-primary">${ICON.qr}Etiketten drucken</button>
                 <button data-action="qr-zip" class="btn-outline">Als Bilder herunterladen</button>
             </div>`;
@@ -1084,16 +1085,6 @@ async function renderQrCenter() {
                 <a href="/api/qr/${esc(f.code)}/png?download=1" class="icon-btn p-1" title="Als Bild herunterladen">↓</a>
                 <button data-action="delete-free-code" data-code="${esc(f.code)}" class="icon-btn p-1 hover:text-red-600" title="Löschen">✕</button></span>`).join('')}</div>`
                 : '<p class="text-sm text-slate-400">Keine freien Codes vorhanden.</p>'}`;
-    } else if (state.qr.tab === 'adresse') {
-        body.innerHTML = `
-            <form data-form="qr-url" class="max-w-xl space-y-4">
-                <div>
-                    <label class="label">Adresse im QR-Code</label>
-                    <input name="qr_url" class="input font-mono" value="${esc(state.me.verein.qr_url || '')}" placeholder="${esc(location.origin)}" autocapitalize="none" autocorrect="off" spellcheck="false">
-                </div>
-                <p class="text-sm text-slate-500">Diese Adresse öffnet sich, wenn jemand einen QR-Code mit der Handykamera scannt. Am besten einmal festlegen, <b>bevor</b> Schilder gemacht werden – z. B. eure eigene Domain. Leer lassen = ${esc(location.origin)}</p>
-                <button class="btn-primary">Speichern</button>
-            </form>`;
     }
 }
 
@@ -1109,16 +1100,47 @@ function renderQrList() {
                 <input type="checkbox" data-change="qr-select" data-id="${i.id}" class="w-4 h-4 shrink-0" ${state.qr.selected.has(i.id) ? 'checked' : ''}>
                 <span class="font-mono text-xs text-slate-400 w-12 shrink-0">${esc(i.deviceId)}</span>
                 <span class="font-bold truncate">${esc(i.name)}</span>
-                <span class="text-xs text-slate-400 ml-auto shrink-0">${esc(i.category)}</span>
+                <span class="text-xs text-slate-400 ml-auto shrink-0 hidden sm:inline">${esc(i.category)}</span>
+                ${i.qr_code ? `<span class="font-mono text-xs bg-slate-100 rounded px-2 py-0.5 shrink-0">${esc(i.qr_code)}</span>`
+                    : '<span class="text-xs text-amber-600 font-bold shrink-0">kein QR-Code</span>'}
             </label>`).join('')}
         </div>` : '<p class="text-sm text-slate-400 py-6 text-center">Keine Geräte gefunden.</p>';
     renderQrCount();
 }
 
+// QR-Code einem Gerät zuweisen: Vorrat, Schild scannen/eintippen oder neu erzeugen
+async function openAssignQr(item) {
+    closeModal('qr-modal');
+    state.assignItem = item;
+    $('#qr-assign-item').textContent = `${item.name} · Nr. ${item.deviceId}${item.qr_code ? ` – bisheriger Code ${item.qr_code} wird frei` : ''}`;
+    $('#qr-assign-modal form').reset();
+    $('#qr-assign-free').innerHTML = '<p class="text-sm text-slate-400">Lade …</p>';
+    openModal('qr-assign-modal');
+    const frei = await api('/qr/frei');
+    $('#qr-assign-free').innerHTML = frei.length
+        ? `<div class="flex flex-wrap gap-2 max-h-40 overflow-y-auto">${frei.map(f => `<button data-action="qr-assign-pick" data-code="${esc(f.code)}" class="font-mono text-sm bg-slate-100 hover:bg-ozean-leicht hover:text-ozean-tief rounded-lg px-3 py-1.5">${esc(f.code)}</button>`).join('')}</div>`
+        : '<p class="text-sm text-slate-400">Keine freien Codes im Vorrat.</p>';
+}
+
+async function assignQr(body) {
+    const item = state.assignItem;
+    const r = await api(`/equipment/${item.id}/qr`, { method: 'PUT', body });
+    closeModal('qr-assign-modal');
+    await afterChange(`QR-Code ${r.code} zugewiesen.`);
+}
+
+const selectedWithoutCode = () => state.items.filter(i => state.qr.selected.has(i.id) && !i.qr_code);
+
 function renderQrCount() {
     const n = state.qr.selected.size;
+    const ohne = selectedWithoutCode().length;
     const box = $('#qr-count');
-    if (box) box.innerHTML = `<b>${n}</b> ${n === 1 ? 'Gerät' : 'Geräte'} ausgewählt`;
+    if (box) box.innerHTML = `<b>${n}</b> ausgewählt${ohne ? `, davon <b class="text-amber-600">${ohne} ohne QR-Code</b>` : ''}`;
+    const btn = $('#qr-assign-selected');
+    if (btn) {
+        btn.hidden = !ohne || !can('can_manage_items');
+        btn.textContent = `QR-Codes zuweisen (${ohne})`;
+    }
 }
 
 // =====================================================================
@@ -1165,7 +1187,9 @@ const actions = {
                 <button data-action="print-label" data-id="${i.id}" class="btn-outline w-full py-3">Etikett drucken</button>
                 <button data-action="close" class="btn-light w-full py-3">Schließen</button>
             </div>
-            ${can('can_manage_items') ? `<button data-action="change-qr" data-id="${i.id}" class="text-xs text-slate-400 hover:text-slate-700 underline mt-4">Anderes Schild verwenden</button>` : ''}`;
+            ${can('can_manage_items') ? `<div class="flex justify-center gap-4 mt-4">
+                <button data-action="assign-qr" data-id="${i.id}" class="text-xs text-slate-400 hover:text-slate-700 underline">Anderen Code zuweisen</button>
+                <button data-action="release-qr" data-id="${i.id}" class="text-xs text-slate-400 hover:text-red-600 underline">QR-Code entfernen</button></div>` : ''}`;
         openModal('qr-modal');
     },
     'code-new-item': () => { const code = state.pendingCode; closeModal('code-modal'); openItemForm(null, code); },
@@ -1177,18 +1201,27 @@ const actions = {
         await afterChange(`QR-Code ${state.pendingCode} zugeordnet.`);
         openDetail(i.id);
     },
-    'change-qr': (el) => {
-        closeModal('qr-modal');
-        const form = $('#qr-change-modal form');
-        form.reset();
-        form.elements.id.value = el.dataset.id;
-        openModal('qr-change-modal');
-    },
-    'scan-for-change': () => openScanner((text) => {
+    'assign-qr': (el) => openAssignQr(findItem(el.dataset.id)),
+    async 'qr-assign-pick'(el) { await assignQr({ code: el.dataset.code }); },
+    async 'qr-assign-new'() { await assignQr({ neu: true }); },
+    'scan-for-assign': () => openScanner((text) => {
         const r = parseScan(text);
         if (!r || !r.code) return toast('Kein gültiger QR-Code erkannt.', 'error');
-        $('#qr-change-modal form').elements.code.value = r.code.toUpperCase();
+        openModal('qr-assign-modal');
+        return assignQr({ code: r.code });
     }),
+    async 'release-qr'(el) {
+        const i = findItem(el.dataset.id);
+        if (!await confirmDialog(`QR-Code ${i.qr_code} von „${i.name}“ entfernen?\nDer Code wird frei und kann einem anderen Gerät zugewiesen werden.`, 'Entfernen')) return;
+        await api(`/equipment/${i.id}/qr`, { method: 'DELETE' });
+        closeModal('qr-modal');
+        await afterChange('QR-Code entfernt.');
+    },
+    async 'qr-assign-selected'() {
+        const ids = selectedWithoutCode().map(i => i.id);
+        const r = await api('/qr/zuweisen', { method: 'POST', body: { ids } });
+        await afterChange(r.message);
+    },
     async 'print-free-codes'() {
         const frei = await api('/qr/frei');
         window.open(`/etiketten.html?codes=${frei.map(f => f.code).join(',')}`, '_blank');
@@ -1260,11 +1293,13 @@ const actions = {
     'qr-print': () => {
         const ids = [...state.qr.selected];
         if (!ids.length) return toast('Bitte mindestens ein Gerät auswählen.', 'error');
+        if (selectedWithoutCode().length === ids.length) return toast('Die ausgewählten Geräte haben noch keinen QR-Code.', 'error');
         window.open(`/etiketten.html?ids=${ids.join(',')}`, '_blank');
     },
     'qr-zip': () => {
         const ids = [...state.qr.selected];
         if (!ids.length) return toast('Bitte mindestens ein Gerät auswählen.', 'error');
+        if (selectedWithoutCode().length === ids.length) return toast('Die ausgewählten Geräte haben noch keinen QR-Code.', 'error');
         if (ids.length > 500) return toast('Maximal 500 Bilder auf einmal.', 'error');
         downloadFile(`/api/qr/bilder.zip?ids=${ids.join(',')}`);
     },
@@ -1435,17 +1470,8 @@ const forms = {
         closeModal('scan-modal');
         if (cb) await cb(text);
     },
-    async 'qr-change'(form) {
-        const v = formValues(form);
-        const r = await api(`/equipment/${v.id}/qr`, { method: 'PUT', body: { code: v.code } });
-        closeModal('qr-change-modal');
-        await afterChange(`QR-Code ${r.code} zugeordnet.`);
-    },
-    async 'qr-url'(form) {
-        await api('/verein', { method: 'PUT', body: { name: state.me.verein.name, qr_url: form.elements.qr_url.value } });
-        state.me = await api('/me');
-        toast('Gespeichert.');
-        renderQrCenter();
+    async 'qr-assign-code'(form) {
+        await assignQr({ code: form.elements.code.value });
     },
     async 'qr-generate'(form) {
         const r = await api('/qr/frei', { method: 'POST', body: { anzahl: Number(form.elements.anzahl.value) } });

@@ -156,8 +156,11 @@ test('Export und Vorlage sind gültige Excel-Dateien und wieder importierbar', a
 });
 
 test('Re-Import erkennt Geräte am festen QR-Code, auch wenn sich die Inventarnummer geändert hat', async () => {
-    const items = (await admin.get('/api/equipment')).body;
-    const f = items.find(i => i.deviceId === '1001');
+    let items = (await admin.get('/api/equipment')).body;
+    let f = items.find(i => i.deviceId === '1001');
+    await admin.put(`/api/equipment/${f.id}/qr`, { neu: true });
+    items = (await admin.get('/api/equipment')).body;
+    f = items.find(i => i.deviceId === '1001');
     const kats = (await admin.get('/api/kategorien')).body;
     // Kategorie in Excel geändert, Inventarnummer veraltet – Zuordnung trotzdem über den QR-Code
     const file = await xlsx([

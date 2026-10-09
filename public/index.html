@@ -347,7 +347,7 @@
         </div>
         <div id="scan-status" class="text-sm text-center font-medium mt-3 min-h-[1.25rem]"></div>
         <form data-form="scan-manual" class="flex gap-2 mt-4 pt-4 border-t border-slate-100">
-            <input name="code" class="input font-mono uppercase" placeholder="Code eintippen, z. B. K7F3X9" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="40" required>
+            <input name="code" class="input font-mono uppercase placeholder:normal-case" placeholder="Code eintippen, z. B. K7F3X9" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="40" required>
             <button class="btn-dark">Öffnen</button>
         </form>
     </div>
@@ -386,22 +386,34 @@
     <div class="dialog max-w-sm text-center" id="qr-modal-content"></div>
 </div>
 
-<!-- Anderen QR-Code für ein Gerät -->
-<div id="qr-change-modal" class="overlay" hidden>
-    <form data-form="qr-change" class="dialog max-w-sm">
-        <h2 class="font-extrabold text-xl mb-1">Anderes Schild verwenden</h2>
-        <p class="text-sm text-slate-500 mb-5">Für ein schon vorhandenes QR-Schild: Schild scannen oder den Code darunter eintippen.</p>
-        <input type="hidden" name="id">
-        <label class="label">Code vom Schild</label>
-        <div class="flex gap-2">
-            <input name="code" class="input font-mono uppercase" required maxlength="40" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="z. B. K7F3X9">
-            <button type="button" data-action="scan-for-change" class="btn-outline" title="Scannen">Scannen</button>
+<!-- QR-Code einem Gerät zuweisen -->
+<div id="qr-assign-modal" class="overlay" hidden>
+    <div class="dialog max-w-md">
+        <div class="flex justify-between items-start mb-1">
+            <h2 class="font-extrabold text-xl">QR-Code zuweisen</h2>
+            <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
         </div>
-        <div class="flex gap-3 mt-6">
-            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
-            <button class="btn-primary flex-1 py-3">Zuordnen</button>
+        <p id="qr-assign-item" class="text-sm text-slate-500 mb-5"></p>
+
+        <div class="space-y-5">
+            <div>
+                <div class="font-bold text-sm mb-2">1. Code aus dem Vorrat nehmen</div>
+                <div id="qr-assign-free"></div>
+            </div>
+            <form data-form="qr-assign-code" class="border-t border-slate-100 pt-5">
+                <div class="font-bold text-sm mb-2">2. Vorhandenes Schild scannen oder Code eintippen</div>
+                <div class="flex gap-2">
+                    <input name="code" class="input font-mono uppercase placeholder:normal-case" required maxlength="40" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="z. B. K7F3X9">
+                    <button type="button" data-action="scan-for-assign" class="btn-outline">Scannen</button>
+                    <button class="btn-dark">OK</button>
+                </div>
+            </form>
+            <div class="border-t border-slate-100 pt-5">
+                <div class="font-bold text-sm mb-2">3. Neuen Code erzeugen</div>
+                <button data-action="qr-assign-new" class="btn-outline w-full py-3">Neuen QR-Code erzeugen und zuweisen</button>
+            </div>
         </div>
-    </form>
+    </div>
 </div>
 
 <!-- Bildansicht -->

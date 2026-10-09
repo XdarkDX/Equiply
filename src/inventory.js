@@ -126,6 +126,13 @@ function createInventory(db) {
         return { code, old: old ? old.code : null };
     }
 
+    // Löst den Code vom Gerät; er wird wieder frei
+    function releaseCode(equipmentId) {
+        const old = q.codeOfItem.get(equipmentId);
+        q.releaseItem.run(equipmentId);
+        return old ? old.code : null;
+    }
+
     function codeOf(equipmentId) {
         const row = q.codeOfItem.get(equipmentId);
         return row ? row.code : null;
@@ -140,8 +147,9 @@ function createInventory(db) {
         }
         if (qrCode) checkCode(vereinId, qrCode); // vor dem Anlegen prüfen, damit kein halbes Gerät entsteht
         const id = Number(q.insert.run({ ...fields, verein_id: vereinId, kategorie_id: kategorie.id, device_id: deviceId }).lastInsertRowid);
-        const code = qrCode ? assignCode(vereinId, id, qrCode).code : newCode(vereinId, id);
-        log(vereinId, userId, id, 'erstellt', `${fields.name} (${deviceId}) angelegt – QR-Code ${code}`);
+        // QR-Codes werden nur ausdrücklich zugewiesen (nicht automatisch beim Anlegen)
+        const code = qrCode ? assignCode(vereinId, id, qrCode).code : null;
+        log(vereinId, userId, id, 'erstellt', `${fields.name} (${deviceId}) angelegt${code ? ` – QR-Code ${code}` : ''}`);
         return { id, deviceId, qrCode: code };
     }
 
@@ -180,7 +188,7 @@ function createInventory(db) {
         return item;
     }
 
-    return { FIELDS, log, newCode, checkCode, assignCode, codeOf, getCategory, createCategory, validatePrefix, suggestPrefix, nextDeviceId, readFields, create, update, getItem, categories: (v) => q.kategorien.all(v) };
+    return { FIELDS, log, newCode, checkCode, assignCode, releaseCode, codeOf, getCategory, createCategory, validatePrefix, suggestPrefix, nextDeviceId, readFields, create, update, getItem, categories: (v) => q.kategorien.all(v) };
 }
 
 module.exports = { createInventory, FIELDS };
