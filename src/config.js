@@ -13,6 +13,8 @@ if (!jwtSecret) {
 
 module.exports = {
     port: parseInt(process.env.PORT, 10) || 3000,
+    // 127.0.0.1 = nur lokal erreichbar (z. B. hinter Caddy/nginx), 0.0.0.0 = von außen erreichbar
+    host: process.env.HOST || '0.0.0.0',
     dbPath: process.env.DB_PATH || path.join(__dirname, '..', 'data', 'equiply.db'),
     jwtSecret,
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',

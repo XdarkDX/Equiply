@@ -12,6 +12,30 @@ npm start                # http://localhost:3000
 
 `npm run dev` startet mit automatischem Neuladen, `npm test` führt die API-Tests aus.
 
+## Auf einem Server installieren (Debian/Ubuntu)
+
+```bash
+apt install -y git
+git clone -b ccr-632c83c1-hj1wq2 https://github.com/XdarkDX/Equiply.git
+cd Equiply
+sudo bash deploy/install.sh equiply.meinverein.de   # mit Domain → automatisch HTTPS
+# oder ohne Domain:  sudo bash deploy/install.sh    → http://SERVER-IP:3000
+```
+
+Das Skript installiert Node.js, richtet Equiply als Systemdienst ein (startet automatisch nach Neustart),
+erzeugt sichere Schlüssel, legt tägliche Backups an und richtet bei Angabe einer Domain Caddy mit
+Let's-Encrypt-Zertifikat ein. Das Superadmin-Passwort wird am Ende einmal angezeigt.
+
+| Was | Wo |
+|-----|----|
+| Programm | `/opt/equiply` |
+| Datenbank | `/var/lib/equiply/equiply.db` |
+| Backups (14 Tage) | `/var/lib/equiply/backups/` |
+| Konfiguration | `/etc/equiply/equiply.env` |
+
+**Update:** `cd Equiply && git pull && sudo bash deploy/install.sh <domain>`
+**Log:** `journalctl -u equiply -f`
+
 ## Aufbau
 
 ```
