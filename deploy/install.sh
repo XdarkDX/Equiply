@@ -121,6 +121,8 @@ chmod 755 /etc/cron.daily/equiply-backup
 
 if [[ -n "$DOMAIN" ]]; then
     info "Caddy (Webserver mit automatischem HTTPS) für $DOMAIN einrichten"
+    # Zuerst Caddy aus den Debian/Ubuntu-Paketquellen, nur falls dort nicht vorhanden das Caddy-Repository
+    if ! command -v caddy >/dev/null; then apt-get install -y -qq caddy >/dev/null 2>&1 || true; fi
     if ! command -v caddy >/dev/null; then
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
