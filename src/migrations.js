@@ -152,4 +152,96 @@ module.exports = [
             }
         },
     },
+    {
+        version: 3,
+        name: 'Eigene Kategorien, Zusatzfelder, Bilder, Kommentare, Aktivitätsprotokoll, Sitzungsversion',
+        up(db) {
+            db.exec(`
+                ALTER TABLE nutzer ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;
+
+                CREATE TABLE kategorien (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    verein_id   INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    name        TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(name)) > 0),
+                    prefix      TEXT NOT NULL CHECK (length(prefix) BETWEEN 1 AND 4 AND prefix NOT GLOB '*[^0-9A-Z]*'),
+                    created_at  TEXT NOT NULL DEFAULT ${NOW},
+                    UNIQUE (verein_id, name),
+                    UNIQUE (verein_id, prefix)
+                );
+
+                INSERT INTO kategorien (verein_id, name, prefix)
+                SELECT v.id, k.name, k.prefix FROM vereine v CROSS JOIN (
+                    SELECT 'Flaschen' AS name, '1' AS prefix UNION ALL SELECT 'Atemregler', '2' UNION ALL
+                    SELECT 'Jackets', '3' UNION ALL SELECT 'Blei', '4' UNION ALL SELECT 'Sonstiges', '5'
+                ) k;
+
+                CREATE TABLE equipment_neu (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    verein_id     INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    kategorie_id  INTEGER NOT NULL REFERENCES kategorien(id),
+                    device_id     TEXT NOT NULL CHECK (length(trim(device_id)) > 0),
+                    name          TEXT NOT NULL CHECK (length(trim(name)) > 0),
+                    hersteller    TEXT,
+                    seriennummer  TEXT,
+                    groesse       TEXT,
+                    lagerort      TEXT,
+                    kaufdatum     TEXT CHECK (kaufdatum IS NULL OR kaufdatum ${ISO_DATE}),
+                    tuev          TEXT CHECK (tuev IS NULL OR tuev ${ISO_DATE}),
+                    condition     TEXT NOT NULL DEFAULT 'Gut' CHECK (condition IN ('Gut', 'Gebrauchsspuren', 'Reparaturbedürftig')),
+                    notes         TEXT,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW},
+                    updated_at    TEXT NOT NULL DEFAULT ${NOW},
+                    UNIQUE (verein_id, device_id)
+                );
+
+                INSERT INTO equipment_neu (id, verein_id, kategorie_id, device_id, name, tuev, condition, notes, created_at, updated_at)
+                SELECT e.id, e.verein_id, k.id, e.device_id, e.name, e.tuev, e.condition, e.notes, e.created_at, e.updated_at
+                FROM equipment e JOIN kategorien k ON k.verein_id = e.verein_id AND k.name = e.category;
+
+                DROP TABLE equipment;
+                ALTER TABLE equipment_neu RENAME TO equipment;
+                CREATE INDEX idx_equipment_verein ON equipment(verein_id);
+                CREATE INDEX idx_equipment_kategorie ON equipment(kategorie_id);
+
+                CREATE TRIGGER trg_equipment_updated_at AFTER UPDATE ON equipment
+                FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+                BEGIN
+                    UPDATE equipment SET updated_at = ${NOW} WHERE id = NEW.id;
+                END;
+
+                CREATE TABLE bilder (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    equipment_id  INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+                    datei         TEXT NOT NULL UNIQUE,
+                    mime          TEXT NOT NULL,
+                    groesse       INTEGER NOT NULL,
+                    erstellt_von  INTEGER REFERENCES nutzer(id) ON DELETE SET NULL,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW}
+                );
+                CREATE INDEX idx_bilder_equipment ON bilder(equipment_id);
+
+                CREATE TABLE kommentare (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    equipment_id  INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+                    nutzer_id     INTEGER REFERENCES nutzer(id) ON DELETE SET NULL,
+                    text          TEXT NOT NULL CHECK (length(trim(text)) BETWEEN 1 AND 2000),
+                    created_at    TEXT NOT NULL DEFAULT ${NOW}
+                );
+                CREATE INDEX idx_kommentare_equipment ON kommentare(equipment_id, created_at);
+
+                -- Wer hat wann was gemacht. Bleibt erhalten, auch wenn Gerät oder Nutzer gelöscht werden.
+                CREATE TABLE aktivitaeten (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    verein_id     INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    equipment_id  INTEGER REFERENCES equipment(id) ON DELETE SET NULL,
+                    nutzer_id     INTEGER REFERENCES nutzer(id) ON DELETE SET NULL,
+                    aktion        TEXT NOT NULL,
+                    details       TEXT,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW}
+                );
+                CREATE INDEX idx_aktivitaeten_verein ON aktivitaeten(verein_id, created_at);
+                CREATE INDEX idx_aktivitaeten_equipment ON aktivitaeten(equipment_id);
+            `);
+        },
+    },
 ];

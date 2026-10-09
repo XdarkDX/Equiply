@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0369a1">
+    <meta name="robots" content="noindex">
+    <title>Equiply – Inventar</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="stylesheet" href="app.css">
+    <script src="app.js" defer></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen">
+
+<!-- Ladebildschirm -->
+<div id="loading" class="fixed inset-0 bg-white z-[200] flex justify-center items-center">
+    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-ozean-normal"></div>
+</div>
+
+<!-- Login / Ersteinrichtung -->
+<div id="auth-view" hidden class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-ozean-leicht via-white to-slate-100">
+    <div class="w-full max-w-md">
+        <div class="text-center mb-8">
+            <div class="inline-flex bg-ozean-normal text-white p-3 rounded-2xl shadow-lg shadow-ozean-normal/30 mb-4">
+                <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <h1 class="text-4xl font-extrabold text-ozean-tief tracking-tight">Equiply</h1>
+            <p class="text-slate-500 mt-1">Equipment-Verwaltung für deinen Verein</p>
+        </div>
+
+        <div class="card p-6 md:p-8">
+            <div id="auth-error" hidden class="bg-red-50 text-red-600 border border-red-100 p-3 rounded-xl mb-4 text-sm font-medium"></div>
+
+            <form id="form-login" data-form="login" class="space-y-4">
+                <h2 class="font-extrabold text-xl text-slate-800">Anmelden</h2>
+                <div><label class="label" for="login-user">Benutzername oder E-Mail</label><input id="login-user" name="username" class="input" autocomplete="username" required></div>
+                <div><label class="label" for="login-pass">Passwort</label><input id="login-pass" name="password" type="password" class="input" autocomplete="current-password" required></div>
+                <button class="btn-primary w-full py-3.5">Anmelden</button>
+                <p class="text-xs text-slate-400 text-center">Passwort vergessen? Ein Admin deines Vereins kann es zurücksetzen.</p>
+                <p id="register-link" hidden class="text-sm text-center"><button type="button" data-action="show-setup" class="font-bold text-ozean-normal hover:underline">Neuen Verein registrieren</button></p>
+            </form>
+
+            <form id="form-setup" data-form="setup" hidden class="space-y-4">
+                <div>
+                    <h2 id="setup-title" class="font-extrabold text-xl text-slate-800">Willkommen! Richte deinen Verein ein</h2>
+                    <p id="setup-hint" class="text-sm text-slate-500 mt-1">Du wirst Admin und kannst danach weitere Mitglieder einladen.</p>
+                </div>
+                <div><label class="label" for="setup-verein">Vereinsname</label><input id="setup-verein" name="vereinName" class="input" required maxlength="100" placeholder="z. B. Tauchclub Nordsee e.V."></div>
+                <div><label class="label" for="setup-user">Dein Benutzername</label><input id="setup-user" name="username" class="input" required maxlength="50" autocomplete="username"></div>
+                <div><label class="label" for="setup-email">E-Mail</label><input id="setup-email" name="email" type="email" class="input" required autocomplete="email"></div>
+                <div><label class="label" for="setup-pass">Passwort</label><input id="setup-pass" name="password" type="password" class="input" required minlength="8" autocomplete="new-password" placeholder="Mindestens 8 Zeichen"></div>
+                <button class="btn-dark w-full py-3.5">Verein einrichten</button>
+                <p id="login-link" hidden class="text-sm text-center"><button type="button" data-action="show-login" class="font-bold text-ozean-normal hover:underline">Zurück zum Login</button></p>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Hauptansicht -->
+<div id="app-view" hidden class="min-h-screen flex flex-col">
+    <header class="bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="bg-ozean-normal text-white p-2 rounded-xl shrink-0"><svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+                <div class="min-w-0">
+                    <div class="text-lg font-extrabold text-slate-800 leading-tight">Equiply</div>
+                    <div id="verein-name" class="text-xs text-slate-500 truncate"></div>
+                </div>
+            </div>
+            <nav class="flex items-center gap-1">
+                <button data-action="open-import" data-perm="can_manage_items" class="btn-outline hidden md:inline-flex" title="Excel/CSV importieren">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0-12l-4 4m4-4l4 4"/></svg>Import
+                </button>
+                <a href="/api/export/inventar.xlsx" class="btn-outline hidden md:inline-flex" title="Inventar als Excel herunterladen">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 16V4m0 12l-4-4m4 4l4-4"/></svg>Export
+                </a>
+                <button data-action="open-settings" id="settings-btn" hidden class="icon-btn" title="Einstellungen">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                </button>
+                <div class="relative">
+                    <button data-action="toggle-menu" class="icon-btn flex items-center gap-2" title="Profil">
+                        <span id="user-initial" class="w-8 h-8 rounded-full bg-ozean-leicht text-ozean-tief font-extrabold flex items-center justify-center text-sm"></span>
+                    </button>
+                    <div id="user-menu" hidden class="absolute right-0 mt-2 w-60 card p-2 shadow-xl z-50">
+                        <div class="px-3 py-2 border-b border-slate-100 mb-1">
+                            <div id="user-name" class="font-bold text-sm truncate"></div>
+                            <div id="user-role" class="text-xs text-slate-500"></div>
+                        </div>
+                        <button data-action="open-import" data-perm="can_manage_items" class="md:hidden w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-sm font-medium">Excel/CSV importieren</button>
+                        <a href="/api/export/inventar.xlsx" class="md:hidden block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm font-medium">Als Excel exportieren</a>
+                        <button data-action="open-password" class="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-sm font-medium">Passwort ändern</button>
+                        <button data-action="logout" class="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-sm font-medium text-red-600">Abmelden</button>
+                    </div>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 md:px-8 py-6 flex-1 w-full">
+        <!-- Kennzahlen -->
+        <div id="stats" class="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-3 mb-6"></div>
+
+        <!-- Werkzeugleiste -->
+        <div class="flex flex-col md:flex-row gap-3 mb-4">
+            <div class="relative flex-1">
+                <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/></svg>
+                <input id="search" data-input="search" type="search" class="input pl-9 bg-white" placeholder="Suchen: Name, Nummer, Seriennummer, Lagerort, Ausleiher …">
+            </div>
+            <div class="flex gap-2">
+                <select id="status-filter" data-change="status-filter" class="input bg-white md:w-48">
+                    <option value="">Alle Zustände</option>
+                    <option value="verfuegbar">Verfügbar</option>
+                    <option value="ausgeliehen">Ausgeliehen</option>
+                    <option value="ueberfaellig">Überfällig</option>
+                    <option value="tuev">TÜV fällig</option>
+                    <option value="defekt">Defekt</option>
+                </select>
+                <div class="flex bg-white border border-slate-200 rounded-lg p-1 shrink-0">
+                    <button data-action="view" data-view="grid" class="view-btn icon-btn p-1.5" title="Kachelansicht"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg></button>
+                    <button data-action="view" data-view="list" class="view-btn icon-btn p-1.5" title="Listenansicht"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center justify-between gap-3 mb-6">
+            <div id="category-chips" class="flex gap-2 overflow-x-auto pb-1"></div>
+            <div class="flex gap-2 shrink-0">
+                <button data-action="print-labels" class="btn-outline hidden sm:inline-flex" title="QR-Etiketten für die angezeigten Geräte drucken">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/></svg>Etiketten
+                </button>
+                <button data-action="new-item" data-perm="can_manage_items" class="btn-primary">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg><span class="hidden sm:inline">Gerät hinzufügen</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="result-count" class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3"></div>
+        <div id="inventory"></div>
+    </main>
+
+    <footer class="text-center text-xs text-slate-400 py-6">Equiply <span id="app-version"></span></footer>
+</div>
+
+<!-- Gerät: Detailansicht -->
+<div id="detail-modal" class="overlay" hidden>
+    <div class="dialog max-w-5xl p-0 md:p-0" id="detail-content"></div>
+</div>
+
+<!-- Gerät anlegen / bearbeiten -->
+<div id="item-modal" class="overlay" hidden>
+    <form data-form="item" class="dialog max-w-2xl">
+        <div class="flex justify-between items-center mb-5">
+            <h2 id="item-title" class="font-extrabold text-xl">Gerät</h2>
+            <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
+        </div>
+        <input type="hidden" name="id">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="sm:col-span-2"><label class="label">Bezeichnung *</label><input name="name" class="input" required maxlength="100" placeholder="z. B. 12 L Stahlflasche"></div>
+            <div><label class="label">Kategorie</label><select name="kategorie_id" class="input" id="item-kategorie"></select></div>
+            <div><label class="label">Inventarnummer</label><input name="deviceId" class="input font-mono" disabled placeholder="wird automatisch vergeben"></div>
+            <div><label class="label">Hersteller</label><input name="hersteller" class="input" maxlength="100"></div>
+            <div><label class="label">Seriennummer</label><input name="seriennummer" class="input" maxlength="100"></div>
+            <div><label class="label">Größe / Volumen</label><input name="groesse" class="input" maxlength="50" placeholder="z. B. XL, 12 L, 2 kg"></div>
+            <div><label class="label">Lagerort</label><input name="lagerort" class="input" maxlength="100" list="lagerorte" placeholder="z. B. Regal 3"></div>
+            <div><label class="label">Kaufdatum</label><input name="kaufdatum" type="date" class="input"></div>
+            <div><label class="label">TÜV / nächste Prüfung</label><input name="tuev" type="date" class="input"></div>
+            <div class="sm:col-span-2"><label class="label">Zustand</label>
+                <select name="condition" class="input"><option value="Gut">Einwandfrei</option><option value="Gebrauchsspuren">Leichte Mängel</option><option value="Reparaturbedürftig">Defekt</option></select>
+            </div>
+            <div class="sm:col-span-2"><label class="label">Notizen</label><textarea name="notes" rows="3" maxlength="2000" class="input"></textarea></div>
+            <div class="sm:col-span-2" id="item-photo-field"><label class="label">Fotos (optional)</label><input name="fotos" type="file" accept="image/*" multiple class="input"></div>
+        </div>
+        <datalist id="lagerorte"></datalist>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- Ausleihen / Rückgabe -->
+<div id="action-modal" class="overlay" hidden>
+    <form data-form="action" class="dialog max-w-md">
+        <h2 id="action-title" class="font-extrabold text-xl mb-1"></h2>
+        <p id="action-subtitle" class="text-sm text-slate-500 mb-5"></p>
+        <input type="hidden" name="id"><input type="hidden" name="type">
+        <div id="action-borrow" class="space-y-4">
+            <div><label class="label">Ausleihen an *</label><input name="borrower" class="input" list="ausleiher" maxlength="100" autocomplete="off" placeholder="Name"></div>
+            <div>
+                <label class="label">Rückgabe geplant am</label>
+                <input name="returnDate" type="date" class="input">
+                <div class="flex gap-2 mt-2">
+                    <button type="button" data-action="quick-date" data-days="1" class="btn-light py-1 px-3 text-xs">Morgen</button>
+                    <button type="button" data-action="quick-date" data-days="7" class="btn-light py-1 px-3 text-xs">1 Woche</button>
+                    <button type="button" data-action="quick-date" data-days="14" class="btn-light py-1 px-3 text-xs">2 Wochen</button>
+                </div>
+            </div>
+        </div>
+        <div id="action-return" class="space-y-4">
+            <div><label class="label">Zustand bei Rückgabe</label>
+                <select name="condition" class="input"><option value="Gut">Einwandfrei</option><option value="Gebrauchsspuren">Leichte Mängel</option><option value="Reparaturbedürftig">Defekt</option></select>
+            </div>
+            <div><label class="label">Bemerkung (optional)</label><textarea name="kommentar" rows="2" class="input" maxlength="2000" placeholder="z. B. Ventil schwergängig"></textarea></div>
+        </div>
+        <datalist id="ausleiher"></datalist>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Bestätigen</button>
+        </div>
+    </form>
+</div>
+
+<!-- TÜV erneuern -->
+<div id="tuev-modal" class="overlay" hidden>
+    <form data-form="tuev" class="dialog max-w-sm">
+        <h2 class="font-extrabold text-xl mb-5">TÜV / Prüfung erneuern</h2>
+        <input type="hidden" name="id">
+        <label class="label">Gültig bis</label><input name="tuev" type="date" class="input" required>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- Import -->
+<div id="import-modal" class="overlay" hidden>
+    <div class="dialog max-w-5xl">
+        <div class="flex justify-between items-center mb-5">
+            <h2 class="font-extrabold text-xl">Inventar aus Excel / CSV importieren</h2>
+            <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
+        </div>
+        <div id="import-step1">
+            <label id="import-drop" class="block border-2 border-dashed border-slate-300 rounded-2xl p-8 md:p-12 text-center cursor-pointer hover:border-ozean-normal hover:bg-ozean-leicht/40 transition">
+                <svg class="w-12 h-12 mx-auto text-ozean-normal mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <div class="font-bold text-slate-700">Datei hierher ziehen oder klicken</div>
+                <div class="text-sm text-slate-500 mt-1">Excel (.xlsx) oder CSV – die Spalten werden automatisch erkannt</div>
+                <input id="import-file" data-change="import-file" type="file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheet.sheet,text/csv" class="sr-only">
+            </label>
+            <div class="mt-5 grid md:grid-cols-2 gap-4 text-sm text-slate-600">
+                <div class="bg-slate-50 rounded-xl p-4">
+                    <div class="font-bold text-slate-800 mb-1">Eigene Tabelle?</div>
+                    Kein Problem. Wichtig ist nur eine Spalte „Bezeichnung“ (oder „Name“, „Gerät“). Erkannt werden außerdem z. B. Kategorie, Inventarnummer, Hersteller, Seriennummer, Größe, Lagerort, Kaufdatum, TÜV, Zustand und Notizen.
+                </div>
+                <div class="bg-slate-50 rounded-xl p-4">
+                    <div class="font-bold text-slate-800 mb-1">Lieber mit Vorlage?</div>
+                    <a href="/api/import/vorlage.xlsx" class="text-ozean-normal font-bold hover:underline">Excel-Vorlage herunterladen</a>, ausfüllen und hier hochladen. Vorhandene Inventarnummern werden aktualisiert statt doppelt angelegt.
+                </div>
+            </div>
+        </div>
+        <div id="import-step2" hidden></div>
+    </div>
+</div>
+
+<!-- Einstellungen -->
+<div id="settings-modal" class="overlay" hidden>
+    <div class="dialog max-w-4xl min-h-[60vh]">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="font-extrabold text-xl">Einstellungen</h2>
+            <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
+        </div>
+        <div class="flex border-b-2 border-slate-100 mb-6 overflow-x-auto" id="settings-tabs"></div>
+        <div id="settings-body"></div>
+    </div>
+</div>
+
+<!-- Mitglied bearbeiten -->
+<div id="user-modal" class="overlay" hidden>
+    <form data-form="user" class="dialog max-w-md">
+        <h2 id="user-modal-title" class="font-extrabold text-xl mb-5">Mitglied</h2>
+        <input type="hidden" name="id">
+        <div class="space-y-4">
+            <div><label class="label">Benutzername</label><input name="username" class="input" required maxlength="50" autocomplete="off"></div>
+            <div><label class="label">E-Mail</label><input name="email" type="email" class="input" required autocomplete="off"></div>
+            <div><label class="label" id="user-pass-label">Passwort</label><input name="password" type="password" class="input" autocomplete="new-password" minlength="8"></div>
+            <div><label class="label">Rolle</label><select name="rolle" class="input"></select>
+                <p id="user-self-hint" hidden class="text-xs text-slate-500 mt-1">Deine eigene Rolle kannst du nicht ändern.</p></div>
+        </div>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- Rolle bearbeiten -->
+<div id="role-modal" class="overlay" hidden>
+    <form data-form="role" class="dialog max-w-md">
+        <h2 id="role-modal-title" class="font-extrabold text-xl mb-5">Rolle</h2>
+        <input type="hidden" name="id">
+        <div class="space-y-4">
+            <div><label class="label">Name der Rolle</label><input name="name" class="input" required maxlength="50" placeholder="z. B. Gerätewart"></div>
+            <div class="space-y-3 bg-slate-50 rounded-xl p-4">
+                <label class="flex items-start gap-3 cursor-pointer"><input type="checkbox" name="can_borrow_return" class="mt-1 w-4 h-4"><span><b class="text-sm">Ausleihen & Rückgabe</b><br><span class="text-xs text-slate-500">Geräte ausgeben, zurücknehmen und Fotos hinzufügen</span></span></label>
+                <label class="flex items-start gap-3 cursor-pointer"><input type="checkbox" name="can_manage_items" class="mt-1 w-4 h-4"><span><b class="text-sm">Inventar verwalten</b><br><span class="text-xs text-slate-500">Geräte anlegen, bearbeiten, löschen, importieren, Kategorien</span></span></label>
+                <label class="flex items-start gap-3 cursor-pointer"><input type="checkbox" name="can_manage_users" class="mt-1 w-4 h-4"><span><b class="text-sm">Team verwalten</b><br><span class="text-xs text-slate-500">Mitglieder und Rollen verwalten, Protokoll ansehen</span></span></label>
+            </div>
+        </div>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- Passwort ändern -->
+<div id="password-modal" class="overlay" hidden>
+    <form data-form="password" class="dialog max-w-sm">
+        <h2 class="font-extrabold text-xl mb-5">Passwort ändern</h2>
+        <div class="space-y-4">
+            <div><label class="label">Aktuelles Passwort</label><input name="oldPassword" type="password" class="input" required autocomplete="current-password"></div>
+            <div><label class="label">Neues Passwort</label><input name="newPassword" type="password" class="input" required minlength="8" autocomplete="new-password" placeholder="Mindestens 8 Zeichen"></div>
+            <div><label class="label">Neues Passwort wiederholen</label><input name="newPassword2" type="password" class="input" required minlength="8" autocomplete="new-password"></div>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">Alle anderen Geräte, auf denen du angemeldet bist, werden abgemeldet.</p>
+        <div class="flex gap-3 mt-6">
+            <button type="button" data-action="close" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button class="btn-primary flex-1 py-3">Speichern</button>
+        </div>
+    </form>
+</div>
+
+<!-- Bildansicht -->
+<div id="lightbox" class="fixed inset-0 z-[70] bg-slate-950/95 flex items-center justify-center p-4" hidden data-action="close-lightbox">
+    <img id="lightbox-img" alt="" class="max-w-full max-h-full rounded-lg shadow-2xl">
+    <button class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl font-light" data-action="close-lightbox" title="Schließen">✕</button>
+</div>
+
+<!-- Bestätigen -->
+<div id="confirm-modal" class="overlay z-[80]" hidden>
+    <div class="dialog max-w-sm text-center">
+        <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-amber-100 mb-4">
+            <svg class="h-6 w-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        </div>
+        <p id="confirm-text" class="text-sm font-medium text-slate-800 mb-6 whitespace-pre-line"></p>
+        <div class="flex gap-3">
+            <button id="confirm-no" class="btn-light flex-1 py-3">Abbrechen</button>
+            <button id="confirm-yes" class="btn-danger flex-1 py-3">Ja</button>
+        </div>
+    </div>
+</div>
+
+<!-- Meldungen -->
+<div id="toasts" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[90] flex flex-col gap-2 items-center w-[calc(100%-2rem)] max-w-md pointer-events-none"></div>
+
+</body>
+</html>

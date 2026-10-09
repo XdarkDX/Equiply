@@ -1,68 +1,132 @@
 # Equiply
 
-Equipment-Verwaltung für Tauchvereine: Inventar, TÜV-Termine, Ausleihe/Rückgabe, Rollen & Rechte.
+Equipment-Verwaltung für Vereine – entwickelt für Tauchvereine, nutzbar für jedes Vereinsinventar.
+Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 
-## Starten
+## Funktionen
+
+- **Inventar** mit Inventarnummer, Kategorie, Hersteller, Seriennummer, Größe, Lagerort, Kaufdatum, TÜV/Prüfdatum, Zustand und Notizen
+- **Fotos** pro Gerät (auch direkt mit der Handykamera, werden automatisch verkleinert)
+- **Kommentare** pro Gerät, z. B. für Mängel oder Wartungshinweise
+- **Ausleihe & Rückgabe** mit geplantem Rückgabedatum, Zustand bei Rückgabe und vollständigem Verlauf
+- **Übersicht auf einen Blick:** verfügbar, ausgeliehen, überfällig, TÜV fällig, defekt – mit Suche, Filtern, Kachel- und Listenansicht
+- **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
+- **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
+- **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
+- **QR-Etiketten** zum Ausdrucken (A4-Bögen 3 × 7) – Scannen mit dem Handy öffnet direkt das Gerät
+- **Eigene Kategorien** mit eigenem Nummernkreis
+- **Mitglieder & Rollen** mit feinen Rechten (Ausleihe, Inventar, Team)
+- **Aktivitätsprotokoll:** wer hat wann was geändert
+- Läuft auf PC, Tablet und Handy; lässt sich auf dem Handy als App auf den Startbildschirm legen
+
+## Installation auf einem Server (Debian/Ubuntu)
+
+Voraussetzung: ein Linux-Server (Debian 11+ oder Ubuntu 22.04+) mit root-Zugang, idealerweise eine (Sub-)Domain, die per DNS-A-Eintrag auf den Server zeigt.
 
 ```bash
-npm install
-cp .env.example .env     # JWT_SECRET und ggf. SUPERADMIN_* eintragen
-npm start                # http://localhost:3000
-```
+# Equiply-Paket auf den Server kopieren und entpacken, z. B.:
+tar xzf equiply-2.0.0.tar.gz
+cd equiply
 
-`npm run dev` startet mit automatischem Neuladen, `npm test` führt die API-Tests aus.
-
-## Auf einem Server installieren (Debian/Ubuntu)
-
-```bash
-apt install -y git
-git clone -b ccr-632c83c1-hj1wq2 https://github.com/XdarkDX/Equiply.git
-cd Equiply
 sudo bash deploy/install.sh equiply.meinverein.de   # mit Domain → automatisch HTTPS
 # oder ohne Domain:  sudo bash deploy/install.sh    → http://SERVER-IP:3000
 ```
 
-Das Skript installiert Node.js, richtet Equiply als Systemdienst ein (startet automatisch nach Neustart),
-erzeugt sichere Schlüssel, legt tägliche Backups an und richtet bei Angabe einer Domain Caddy mit
-Let's-Encrypt-Zertifikat ein. Das Superadmin-Passwort wird am Ende einmal angezeigt.
+Das Skript installiert Node.js, richtet Equiply als Systemdienst ein (startet automatisch, auch nach einem Neustart),
+erzeugt einen geheimen Schlüssel, richtet tägliche Backups ein und – wenn eine Domain angegeben ist – den Webserver Caddy
+mit kostenlosem Let's-Encrypt-Zertifikat.
+
+**Danach sofort die Adresse im Browser öffnen und den Verein einrichten.** Wer die Ersteinrichtung abschließt, wird Admin.
+Anschließend ist die Registrierung geschlossen; weitere Mitglieder legt der Admin unter *Einstellungen → Mitglieder* an.
 
 | Was | Wo |
 |-----|----|
 | Programm | `/opt/equiply` |
 | Datenbank | `/var/lib/equiply/equiply.db` |
-| Backups (14 Tage) | `/var/lib/equiply/backups/` |
+| Fotos | `/var/lib/equiply/uploads/` |
+| Backups | `/var/lib/equiply/backups/` (Datenbank: 14 Tage, Fotos: Spiegel) |
 | Konfiguration | `/etc/equiply/equiply.env` |
 
-**Update:** `cd Equiply && git pull && sudo bash deploy/install.sh <domain>`
-**Log:** `journalctl -u equiply -f`
+### Update
 
-## Aufbau
+Neues Paket entpacken und das Installationsskript erneut ausführen – Daten und Konfiguration bleiben erhalten,
+die Datenbank wird automatisch auf den neuen Stand gebracht:
 
-```
-server.js            Einstiegspunkt
-src/config.js        Konfiguration aus Umgebungsvariablen / .env
-src/db.js            Datenbankverbindung + Migrationen ausführen
-src/migrations.js    Datenbankschema (versioniert)
-src/app.js           Express-API
-Equiply.html         Frontend
-test/                API- und Migrationstests
+```bash
+tar xzf equiply-<version>.tar.gz && cd equiply && sudo bash deploy/install.sh equiply.meinverein.de
 ```
 
-## Datenbank
+### Backup & Wiederherstellung
 
-SQLite über `better-sqlite3` (Datei standardmäßig unter `data/equiply.db`, WAL-Modus, Fremdschlüssel aktiv).
+Die Backups liegen auf demselben Server. Für echte Ausfallsicherheit den Ordner `/var/lib/equiply/backups/`
+regelmäßig woandershin kopieren (z. B. per `rsync` oder Backup-Dienst des Hosters).
 
-| Tabelle          | Inhalt |
-|------------------|--------|
-| `vereine`        | Vereine (Name eindeutig, ohne Groß-/Kleinschreibung) |
-| `vereins_rollen` | Rollen je Verein mit den Rechten als eigene Spalten |
-| `nutzer`         | Benutzer (`admin` oder `user` + optionale Vereinsrolle) |
-| `equipment`      | Inventar mit Inventarnummer (eindeutig je Verein), Kategorie, TÜV, Zustand |
-| `ausleihen`      | Jede Ausleihe als eigener Datensatz → vollständiger Verlauf. Pro Gerät höchstens eine offene Ausleihe. |
+Wiederherstellen:
 
-- Wird ein Verein gelöscht, entfernt die Datenbank automatisch alle zugehörigen Daten (`ON DELETE CASCADE`).
-- Schemaänderungen werden als neue Migration in `src/migrations.js` angehängt; der Stand steht in `PRAGMA user_version`.
-- Eine alte `equiply.db` aus der Vorversion wird beim ersten Start automatisch übernommen
-  (`DB_PATH=./equiply.db npm start`). Vorher am besten eine Kopie der Datei anlegen.
+```bash
+systemctl stop equiply
+cp /var/lib/equiply/backups/equiply-JJJJ-MM-TT.db /var/lib/equiply/equiply.db
+rm -f /var/lib/equiply/equiply.db-wal /var/lib/equiply/equiply.db-shm
+rsync -a /var/lib/equiply/backups/uploads/ /var/lib/equiply/uploads/
+chown -R equiply:equiply /var/lib/equiply
+systemctl start equiply
+```
 
-**Backup:** im laufenden Betrieb z. B. `sqlite3 data/equiply.db ".backup backup.db"`.
+### Nützliche Befehle
+
+```bash
+systemctl status equiply       # läuft der Dienst?
+journalctl -u equiply -f       # Live-Log
+systemctl restart equiply      # nach Änderungen an der Konfiguration
+```
+
+### Konfiguration (`/etc/equiply/equiply.env`)
+
+| Variable | Bedeutung | Standard |
+|----------|-----------|----------|
+| `PORT` | Port des Dienstes | `3000` |
+| `HOST` | `127.0.0.1` hinter Caddy/nginx, `0.0.0.0` für direkten Zugriff | `0.0.0.0` |
+| `DB_PATH` | Datenbankdatei | `./data/equiply.db` |
+| `UPLOAD_DIR` | Ordner für Fotos | neben der Datenbank: `uploads/` |
+| `JWT_SECRET` | Geheimer Schlüssel für Logins (wird erzeugt) | – |
+| `SESSION_DAYS` | Tage, die man ohne Nutzung angemeldet bleibt | `14` |
+| `ALLOW_REGISTRATION` | `true` = weitere Vereine dürfen sich auf diesem Server registrieren (getrennte Daten) | `false` |
+
+## Datenschutz & Sicherheit
+
+- Alles läuft auf dem eigenen Server. Es werden **keine externen Dienste, CDNs oder Schriftarten** nachgeladen und keine Daten an Dritte übertragen.
+- Es wird nur ein technisch notwendiges Sitzungs-Cookie gesetzt (HttpOnly, SameSite=Strict) – kein Tracking.
+- Passwörter werden mit bcrypt gespeichert. Nach 10 Fehlversuchen wird der Login für 15 Minuten gebremst.
+- Ändert ein Mitglied sein Passwort (oder setzt ein Admin es zurück), werden alle anderen Sitzungen abgemeldet.
+- Strikte Content-Security-Policy, Prüfung aller Eingaben, Fotos werden anhand ihres Inhalts geprüft (nur JPG, PNG, WebP, GIF).
+
+Gespeicherte personenbezogene Daten: Benutzername und E-Mail der Mitglieder, Namen von Ausleihern, Kommentare und das
+Aktivitätsprotokoll. Der Verein ist dafür verantwortlich, seine Mitglieder darüber zu informieren (Datenschutzerklärung).
+
+## Entwicklung
+
+```bash
+npm install
+cp .env.example .env          # JWT_SECRET eintragen
+npm run dev                   # Server mit automatischem Neuladen auf http://localhost:3000
+npm run watch:css             # CSS bei Änderungen neu bauen (Tailwind)
+npm test                      # API-, Import- und Migrationstests
+npm run package               # Paket equiply-<version>.tar.gz für die Weitergabe erstellen
+```
+
+```
+server.js              Einstiegspunkt
+src/config.js          Konfiguration aus Umgebungsvariablen / .env
+src/db.js              Datenbankverbindung (SQLite) + Migrationen
+src/migrations.js      Datenbankschema (versioniert, wird beim Start automatisch aktualisiert)
+src/session.js         Login-Sitzungen, Rechte, Login-Bremse
+src/inventory.js       Inventar-Logik (Nummernvergabe, Änderungsprotokoll)
+src/importer.js        Excel-/CSV-Erkennung
+src/routes/            API: auth, team, equipment, transfer (Import/Export)
+public/                Oberfläche (HTML, JS, gebautes CSS)
+styles/app.css         Tailwind-Quelle für public/app.css
+deploy/install.sh      Installations- und Update-Skript
+test/                  Tests
+```
+
+Nach Änderungen an Klassen in `public/` oder an `styles/app.css`: `npm run build:css` ausführen und `public/app.css` mit einchecken.

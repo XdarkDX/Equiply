@@ -1,167 +1,237 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const Database = require('better-sqlite3');
-const bcrypt = require('bcrypt');
-const { openDatabase } = require('../src/db');
-const { createApp } = require('../src/app');
+const { startServer, client } = require('./helpers');
 
-const config = { jwtSecret: 'test-secret', jwtExpiresIn: '1h', superadminUser: 'root', superadminPassword: 'root-passwort-123' };
+let srv, admin, helfer;
+const ids = {};
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 1)]);
 
-let server, base, db;
+before(async () => { srv = await startServer(); admin = client(srv.base); helfer = client(srv.base); });
+after(() => srv.close());
 
-before(async () => {
-    db = openDatabase(':memory:');
-    server = createApp(db, config).listen(0);
-    await new Promise(r => server.once('listening', r));
-    base = `http://127.0.0.1:${server.address().port}/api`;
-});
-after(() => { server.close(); db.close(); });
+test('Ersteinrichtung: nur einmal möglich, danach ist die Registrierung zu', async () => {
+    assert.deepEqual((await admin.get('/api/setup')).body, { einrichtung: true, registrierung: false, version: require('../package.json').version });
+    assert.equal((await admin.get('/api/me')).status, 401);
 
-async function call(method, url, body, token) {
-    const headers = {};
-    if (body) headers['Content-Type'] = 'application/json';
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(base + url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    return { status: res.status, body: await res.json() };
-}
-
-let adminToken, helperToken, rolleId, flascheId;
-
-test('Registrierung legt Verein + Admin an, doppelte Namen werden abgelehnt', async () => {
-    const r = await call('POST', '/register', { vereinName: 'Tauchclub Nord', username: 'chef', email: 'chef@example.de', password: 'geheim123' });
+    const r = await admin.post('/api/setup', { vereinName: 'Tauchclub Nord', username: 'chef', email: 'chef@example.de', password: 'geheim123' });
     assert.equal(r.status, 201);
-    adminToken = r.body.token;
+    const cookie = r.headers.get('set-cookie');
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /SameSite=Strict/i);
 
-    assert.equal((await call('POST', '/register', { vereinName: 'tauchclub nord', username: 'x', email: 'x@example.de', password: 'geheim123' })).status, 409);
-    assert.equal((await call('POST', '/register', { vereinName: 'Anderer', username: 'CHEF', email: 'y@example.de', password: 'geheim123' })).status, 409);
-    assert.equal((await call('POST', '/register', { vereinName: 'Kurz', username: 'k', email: 'k@example.de', password: '123' })).status, 400);
-    // fehlgeschlagene Registrierung darf keinen halben Verein hinterlassen
-    assert.equal(db.prepare(`SELECT COUNT(*) c FROM vereine`).get().c, 1);
+    const me = (await admin.get('/api/me')).body;
+    assert.equal(me.role, 'admin');
+    assert.equal(me.verein.name, 'Tauchclub Nord');
+
+    assert.equal((await admin.get('/api/setup')).body.einrichtung, false);
+    const fremd = client(srv.base);
+    assert.equal((await fremd.post('/api/setup', { vereinName: 'Hacker', username: 'h', email: 'h@example.de', password: 'geheim123' })).status, 403);
+    // Standard-Kategorien wurden angelegt
+    assert.deepEqual((await admin.get('/api/kategorien')).body.map(k => k.name), ['Flaschen', 'Atemregler', 'Jackets', 'Blei', 'Sonstiges']);
 });
 
-test('Login und /me', async () => {
-    assert.equal((await call('POST', '/login', { username: 'chef', password: 'falsch' })).status, 401);
-    const r = await call('POST', '/login', { username: 'chef', password: 'geheim123' });
-    assert.equal(r.status, 200);
-    const me = await call('GET', '/me', null, r.body.token);
-    assert.equal(me.body.role, 'admin');
-    assert.equal(me.body.permissions.can_manage_users, true);
+test('Kein Superadmin mehr', async () => {
+    const c = client(srv.base);
+    assert.equal((await c.post('/api/login', { username: 'admin', password: 'EquiplyMaster2026!' })).status, 401);
+    assert.equal((await admin.get('/api/system-overview')).status, 404);
 });
 
-test('Rollen und Nutzer mit eingeschränkten Rechten', async () => {
-    const r = await call('POST', '/rollen', { name: 'Ausgabe', permissions: { can_borrow_return: true } }, adminToken);
+test('Login per Benutzername oder E-Mail, Logout', async () => {
+    const c = client(srv.base);
+    assert.equal((await c.post('/api/login', { username: 'chef', password: 'falsch123' })).status, 401);
+    assert.equal((await c.post('/api/login', { username: 'CHEF@example.de', password: 'geheim123' })).status, 200);
+    assert.equal((await c.get('/api/me')).status, 200);
+    await c.post('/api/logout');
+    assert.equal((await c.get('/api/me')).status, 401);
+});
+
+test('Sicherheits-Header, Fremd-Origin wird blockiert, Frontend wird ausgeliefert', async () => {
+    const r = await admin.get('/api/me');
+    assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
+    assert.equal(r.headers.get('x-frame-options'), 'DENY');
+    assert.equal((await admin.post('/api/kategorien', { name: 'X' }, { headers: { Origin: 'https://boese.example' } })).status, 403);
+    const page = await fetch(srv.base + '/');
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /<title>Equiply/);
+});
+
+test('Rollen und Mitglieder mit eingeschränkten Rechten', async () => {
+    const r = await admin.post('/api/rollen', { name: 'Ausgabe', permissions: { can_borrow_return: true } });
     assert.equal(r.status, 201);
-    rolleId = r.body.id;
-    assert.equal((await call('POST', '/rollen', { name: 'Ausgabe', permissions: {} }, adminToken)).status, 409);
+    ids.rolle = r.body.id;
+    assert.equal((await admin.post('/api/rollen', { name: 'Ausgabe', permissions: {} })).status, 409);
 
-    assert.equal((await call('POST', '/users', { username: 'helfer', email: 'helfer@example.de', password: 'helfer123', vereins_rolle_id: String(rolleId) }, adminToken)).status, 201);
-    helperToken = (await call('POST', '/login', { username: 'helfer', password: 'helfer123' })).body.token;
+    const u = await admin.post('/api/users', { username: 'helfer', email: 'helfer@example.de', password: 'helfer123', rolle: String(ids.rolle) });
+    assert.equal(u.status, 201);
+    ids.helfer = u.body.id;
+    assert.equal((await admin.post('/api/users', { username: 'helfer', email: 'x@example.de', password: 'helfer123' })).status, 409);
 
-    const me = await call('GET', '/me', null, helperToken);
-    assert.deepEqual(me.body.permissions, { can_manage_users: false, can_manage_items: false, can_borrow_return: true });
-    assert.equal((await call('GET', '/users', null, helperToken)).status, 403);
-    assert.equal((await call('POST', '/equipment', { name: 'X', category: 'Blei' }, helperToken)).status, 403);
+    assert.equal((await helfer.post('/api/login', { username: 'helfer', password: 'helfer123' })).status, 200);
+    assert.deepEqual((await helfer.get('/api/me')).body.permissions, { can_manage_users: false, can_manage_items: false, can_borrow_return: true });
+    assert.equal((await helfer.get('/api/users')).status, 403);
+    assert.equal((await helfer.post('/api/equipment', { name: 'X', kategorie_id: 1 })).status, 403);
 });
 
-test('Equipment: fortlaufende Inventarnummern je Kategorie', async () => {
-    const a = await call('POST', '/equipment', { name: '12L Stahl', category: 'Flaschen', tuev: '2030-01-01' }, adminToken);
-    const b = await call('POST', '/equipment', { name: '10L Alu', category: 'Flaschen' }, adminToken);
-    const c = await call('POST', '/equipment', { name: 'Apeks', category: 'Atemregler' }, adminToken);
-    assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['101', '102', '201']);
-    flascheId = a.body.id;
-
-    assert.equal((await call('POST', '/equipment', { name: 'X', category: 'Unsinn' }, adminToken)).status, 400);
-    assert.equal((await call('POST', '/equipment', { name: 'X', category: 'Blei', tuev: '01.01.2030' }, adminToken)).status, 400);
+test('Kategorien: eigene anlegen, Kürzel-Konflikte, Löschen nur wenn leer', async () => {
+    const r = await admin.post('/api/kategorien', { name: 'Lampen' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.prefix, '6');
+    ids.lampen = r.body.id;
+    assert.equal((await admin.post('/api/kategorien', { name: 'Anzüge', prefix: '12' })).status, 409, '12 kollidiert mit 1');
+    assert.equal((await admin.post('/api/kategorien', { name: 'lampen' })).status, 409, 'Name doppelt');
+    const anz = await admin.post('/api/kategorien', { name: 'Anzüge', prefix: 'AZ' });
+    assert.equal(anz.status, 201);
+    assert.equal((await admin.del(`/api/kategorien/${anz.body.id}`)).status, 200);
 });
 
-test('Ausleihe, doppelte Ausleihe, Rückgabe und Verlauf', async () => {
-    assert.equal((await call('PUT', `/equipment/${flascheId}/action`, { borrower: 'Anna', returnDate: '2030-02-01' }, helperToken)).status, 200);
-    assert.equal((await call('PUT', `/equipment/${flascheId}/action`, { borrower: 'Ben' }, helperToken)).status, 409);
+test('Geräte anlegen mit allen Feldern und fortlaufenden Nummern', async () => {
+    const kats = (await admin.get('/api/kategorien')).body;
+    ids.flaschen = kats.find(k => k.name === 'Flaschen').id;
+    const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', kaufdatum: '2020-05-01', notes: 'Rot lackiert' });
+    const b = await admin.post('/api/equipment', { name: '10L Alu', kategorie_id: ids.flaschen });
+    const c = await admin.post('/api/equipment', { name: 'Taschenlampe', kategorie_id: ids.lampen });
+    assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['101', '102', '601']);
+    ids.flasche = a.body.id;
+    ids.lampe = c.body.id;
 
-    let item = (await call('GET', '/equipment', null, helperToken)).body.find(i => i.id === flascheId);
+    const item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
+    assert.equal(item.hersteller, 'Faber');
+    assert.equal(item.category, 'Flaschen');
+    assert.equal(item.aktivitaeten[0].aktion, 'erstellt');
+
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: 9999 })).status, 400);
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, tuev: '31.02.2030' })).status, 400);
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, tuev: '2030-02-31' })).status, 400);
+    assert.equal((await admin.del(`/api/kategorien/${ids.lampen}`)).status, 409, 'Kategorie nicht leer');
+});
+
+test('Bearbeiten schreibt verständliche Änderungen ins Protokoll', async () => {
+    const item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
+    await admin.put(`/api/equipment/${ids.flasche}`, { ...item, kategorie_id: item.kategorie_id, tuev: '2032-01-31' });
+    let log = (await admin.get(`/api/equipment/${ids.flasche}`)).body.aktivitaeten;
+    assert.equal(log[0].aktion, 'tuev');
+    assert.match(log[0].details, /31\.01\.2032/);
+
+    await admin.put(`/api/equipment/${ids.flasche}`, { ...item, tuev: '2032-01-31', lagerort: 'Raum B', name: '12L Stahl rot' });
+    log = (await admin.get(`/api/equipment/${ids.flasche}`)).body.aktivitaeten;
+    assert.equal(log[0].aktion, 'bearbeitet');
+    assert.match(log[0].details, /Lagerort: Raum A → Raum B/);
+});
+
+test('Ausleihe und Rückgabe mit Kommentar und Verlauf', async () => {
+    assert.equal((await helfer.put(`/api/equipment/${ids.flasche}/action`, { borrower: 'Anna', returnDate: '2000-01-01' })).status, 400, 'Datum in der Vergangenheit');
+    assert.equal((await helfer.put(`/api/equipment/${ids.flasche}/action`, { borrower: 'Anna', returnDate: '2099-02-01' })).status, 200);
+    assert.equal((await helfer.put(`/api/equipment/${ids.flasche}/action`, { borrower: 'Ben' })).status, 409);
+
+    let list = (await helfer.get('/api/equipment')).body;
+    let item = list.find(i => i.id === ids.flasche);
     assert.equal(item.status, 'Ausgeliehen');
     assert.equal(item.borrower, 'Anna');
-    assert.equal(item.returnDate, '2030-02-01');
 
-    assert.equal((await call('PUT', `/equipment/${flascheId}/action`, { condition: 'Reparaturbedürftig' }, helperToken)).status, 200);
-    item = (await call('GET', '/equipment', null, helperToken)).body.find(i => i.id === flascheId);
+    assert.equal((await helfer.put(`/api/equipment/${ids.flasche}/action`, { condition: 'Reparaturbedürftig', kommentar: 'Ventil undicht' })).status, 200);
+    item = (await helfer.get(`/api/equipment/${ids.flasche}`)).body;
     assert.equal(item.status, 'Verfügbar');
     assert.equal(item.condition, 'Reparaturbedürftig');
-    assert.equal((await call('PUT', `/equipment/${flascheId}/action`, { borrower: 'Ben' }, helperToken)).status, 409, 'defekt -> keine Ausleihe');
+    assert.equal(item.kommentare[0].text, 'Ventil undicht');
+    assert.equal(item.ausleihen[0].ausgegeben_von, 'helfer');
+    assert.ok(item.aktivitaeten.some(a => a.aktion === 'zurueckgegeben'));
+    assert.equal((await helfer.put(`/api/equipment/${ids.flasche}/action`, { borrower: 'Ben' })).status, 409, 'defekt');
 
-    const hist = await call('GET', `/equipment/${flascheId}/history`, null, helperToken);
-    assert.equal(hist.body.length, 1);
-    assert.equal(hist.body[0].ausgegeben_von, 'helfer');
-    assert.ok(hist.body[0].zurueckgegeben_am);
+    assert.ok((await helfer.get('/api/ausleiher')).body.includes('Anna'));
 });
 
-test('Admin-Ernennung, letzter Admin bleibt geschützt', async () => {
-    const users = (await call('GET', '/users', null, adminToken)).body;
-    const helfer = users.find(u => u.username === 'helfer');
-    const chef = users.find(u => u.username === 'chef');
+test('Bilder: Upload prüft Dateityp, Abruf nur im eigenen Verein, Löschen', async () => {
+    const bad = await helfer.post(`/api/equipment/${ids.flasche}/bilder`, Buffer.from('<svg onload=alert(1)>'), { headers: { 'Content-Type': 'image/svg+xml' } });
+    assert.equal(bad.status, 400);
+    const ok = await helfer.post(`/api/equipment/${ids.flasche}/bilder`, JPEG, { headers: { 'Content-Type': 'image/jpeg' } });
+    assert.equal(ok.status, 201);
+    ids.bild = ok.body.id;
 
-    assert.equal((await call('PUT', `/users/${helfer.id}`, { username: 'helfer', email: 'helfer@example.de', vereins_rolle_id: 'admin' }, adminToken)).status, 200);
-    assert.equal((await call('GET', '/me', null, helperToken)).body.role, 'admin');
+    const img = await admin.get(`/api/bilder/${ids.bild}`);
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(img.body, JPEG);
+    assert.equal((await client(srv.base).get(`/api/bilder/${ids.bild}`)).status, 401);
 
-    assert.equal((await call('DELETE', `/users/${chef.id}`, null, adminToken)).status, 400, 'Selbstlöschung');
-    assert.equal((await call('PUT', `/users/${chef.id}`, { username: 'chef', email: 'chef@example.de', vereins_rolle_id: '' }, helperToken)).status, 200);
-    assert.equal((await call('PUT', `/users/${helfer.id}`, { username: 'helfer', email: 'helfer@example.de', vereins_rolle_id: '' }, adminToken)).status, 403, 'chef ist kein Admin mehr');
+    const list = (await admin.get('/api/equipment')).body;
+    assert.equal(list.find(i => i.id === ids.flasche).bild_id, ids.bild);
+    assert.equal((await admin.del(`/api/bilder/${ids.bild}`)).status, 200);
+    assert.equal((await admin.get(`/api/bilder/${ids.bild}`)).status, 404);
 });
 
-test('Vereine sind voneinander getrennt', async () => {
-    const other = (await call('POST', '/register', { vereinName: 'Süd', username: 'sued', email: 'sued@example.de', password: 'geheim123' })).body.token;
-    assert.equal((await call('GET', '/equipment', null, other)).body.length, 0);
-    assert.equal((await call('DELETE', `/equipment/${flascheId}`, null, other)).status, 404);
-    assert.equal((await call('GET', `/equipment/${flascheId}/history`, null, other)).status, 404);
+test('Kommentare: jeder darf schreiben, nur eigene löschen', async () => {
+    const c = await admin.post(`/api/equipment/${ids.lampe}/kommentare`, { text: 'Akku schwach' });
+    assert.equal(c.status, 201);
+    assert.equal((await helfer.del(`/api/kommentare/${c.body.id}`)).status, 403);
+    const own = await helfer.post(`/api/equipment/${ids.lampe}/kommentare`, { text: 'Stimmt' });
+    assert.equal((await helfer.del(`/api/kommentare/${own.body.id}`)).status, 200);
+    assert.equal((await admin.del(`/api/kommentare/${c.body.id}`)).status, 200);
+    assert.equal((await admin.post(`/api/equipment/${ids.lampe}/kommentare`, { text: '   ' })).status, 400);
 });
 
-test('Superadmin löscht Verein inkl. aller Daten (Kaskade)', async () => {
-    const t = (await call('POST', '/login', { username: 'root', password: 'root-passwort-123' })).body.token;
-    const overview = (await call('GET', '/system-overview', null, t)).body;
-    const nord = overview.vereine.find(v => v.name === 'Tauchclub Nord');
-    assert.equal(nord.equipment_anzahl, 3);
-
-    assert.equal((await call('DELETE', `/vereine/${nord.id}`, null, t)).status, 200);
-    for (const table of ['nutzer', 'equipment', 'vereins_rollen', 'ausleihen']) {
-        const where = table === 'ausleihen' ? '' : `WHERE verein_id = ${nord.id}`;
-        assert.equal(db.prepare(`SELECT COUNT(*) c FROM ${table} ${where}`).get().c, 0, table);
-    }
-    assert.equal((await call('GET', '/me', null, adminToken)).status, 401, 'Token gelöschter Nutzer ist ungültig');
+test('QR-Code fürs Etikett', async () => {
+    const r = await admin.get(`/api/equipment/${ids.lampe}/qr.svg`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /image\/svg\+xml/);
+    assert.match(r.body.toString(), /<svg/);
 });
 
-test('Migration übernimmt eine alte equiply.db', () => {
-    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'equiply-')), 'alt.db');
-    const old = new Database(file);
-    old.exec(`
-        CREATE TABLE vereine (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
-        CREATE TABLE vereins_rollen (id INTEGER PRIMARY KEY AUTOINCREMENT, verein_id INTEGER, name TEXT, permissions TEXT, FOREIGN KEY(verein_id) REFERENCES vereine(id));
-        CREATE TABLE nutzer (id INTEGER PRIMARY KEY AUTOINCREMENT, verein_id INTEGER, username TEXT UNIQUE, email TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', vereins_rolle_id INTEGER);
-        CREATE TABLE equipment (id INTEGER PRIMARY KEY AUTOINCREMENT, verein_id INTEGER, name TEXT, deviceId TEXT, category TEXT, tuev TEXT, status TEXT DEFAULT 'Verfügbar', condition TEXT DEFAULT 'Gut', notes TEXT, borrower TEXT, returnDate TEXT);
-        INSERT INTO vereine (id, name) VALUES (7, 'Altclub');
-        INSERT INTO vereins_rollen VALUES (3, 7, 'Wart', '{"can_manage_items":true}');
-    `);
-    old.prepare(`INSERT INTO nutzer VALUES (5, 7, 'alt', 'alt@example.de', ?, 'user', 3)`).run(bcrypt.hashSync('altpasswort', 4));
-    old.exec(`
-        INSERT INTO equipment VALUES (1, 7, 'Flasche', '101', 'Flaschen', '2025-05-01', 'Ausgeliehen', 'Gut', NULL, 'Carl', '2026-01-01');
-        INSERT INTO equipment VALUES (2, 7, 'Kram', '501', 'Sonstiges', '', 'Verfügbar', 'Gut', NULL, '', '');
-    `);
-    old.close();
+test('Admin-Regeln: Ernennen, letzter Admin, neues Passwort meldet ab', async () => {
+    assert.equal((await admin.put(`/api/users/${ids.helfer}`, { username: 'helfer', email: 'helfer@example.de', rolle: 'admin' })).status, 200);
+    assert.equal((await helfer.get('/api/me')).body.role, 'admin');
 
-    const migrated = openDatabase(file);
-    assert.equal(migrated.pragma('user_version', { simple: true }), 2);
-    assert.equal(migrated.prepare(`SELECT can_manage_items FROM vereins_rollen WHERE id = 3`).get().can_manage_items, 1);
-    assert.ok(bcrypt.compareSync('altpasswort', migrated.prepare(`SELECT password_hash FROM nutzer WHERE id = 5`).get().password_hash));
-    const loan = migrated.prepare(`SELECT * FROM ausleihen WHERE equipment_id = 1 AND zurueckgegeben_am IS NULL`).get();
-    assert.equal(loan.borrower, 'Carl');
-    assert.equal(loan.rueckgabe_geplant, '2026-01-01');
-    assert.equal(migrated.prepare(`SELECT tuev FROM equipment WHERE id = 2`).get().tuev, null);
-    migrated.close();
+    const me = (await admin.get('/api/me')).body;
+    assert.equal((await admin.del(`/api/users/${me.id}`)).status, 400, 'Selbstlöschung');
 
-    // zweites Öffnen: keine erneute Migration, Daten bleiben
-    const again = openDatabase(file);
-    assert.equal(again.prepare(`SELECT COUNT(*) c FROM equipment`).get().c, 2);
-    again.close();
+    // Admin setzt dem Helfer ein neues Passwort -> dessen Sitzung endet
+    assert.equal((await admin.put(`/api/users/${ids.helfer}`, { username: 'helfer', email: 'helfer@example.de', rolle: 'admin', password: 'neuespasswort' })).status, 200);
+    assert.equal((await helfer.get('/api/me')).status, 401);
+    assert.equal((await helfer.post('/api/login', { username: 'helfer', password: 'neuespasswort' })).status, 200);
+
+    // Eigenes Passwort ändern: andere Sitzungen enden, die eigene bleibt
+    const zweitesGeraet = client(srv.base);
+    await zweitesGeraet.post('/api/login', { username: 'chef', password: 'geheim123' });
+    assert.equal((await admin.put('/api/me/password', { oldPassword: 'falsch', newPassword: 'geheim456' })).status, 400);
+    assert.equal((await admin.put('/api/me/password', { oldPassword: 'geheim123', newPassword: 'geheim456' })).status, 200);
+    assert.equal((await admin.get('/api/me')).status, 200);
+    assert.equal((await zweitesGeraet.get('/api/me')).status, 401);
+});
+
+test('Aktivitätsprotokoll und Vereinsname', async () => {
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.' })).status, 200);
+    assert.equal((await admin.get('/api/me')).body.verein.name, 'TC Nord e.V.');
+    const log = (await admin.get('/api/aktivitaeten')).body;
+    assert.ok(log.length > 5);
+    assert.ok(log.some(a => a.aktion === 'ausgeliehen' && a.equipment_name));
+});
+
+test('Löschen eines Geräts entfernt Bilder, Protokoll bleibt', async () => {
+    const up = await admin.post(`/api/equipment/${ids.lampe}/bilder`, JPEG);
+    assert.equal(up.status, 201);
+    assert.equal((await admin.del(`/api/equipment/${ids.lampe}`)).status, 200);
+    assert.equal(srv.db.prepare(`SELECT COUNT(*) c FROM bilder`).get().c, 0);
+    assert.ok((await admin.get('/api/aktivitaeten')).body.some(a => a.aktion === 'geloescht' && /Taschenlampe/.test(a.details)));
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(require('fs').readdirSync(srv.config.uploadDir), []);
+});
+
+test('Login-Bremse nach 10 Fehlversuchen', async () => {
+    const c = client(srv.base);
+    for (let i = 0; i < 10; i++) await c.post('/api/login', { username: 'chef', password: 'falsch' + i });
+    const r = await c.post('/api/login', { username: 'chef', password: 'geheim456' });
+    assert.equal(r.status, 429);
+});
+
+test('Die letzte Kategorie kann nicht gelöscht werden', async () => {
+    const kats = (await admin.get('/api/kategorien')).body.filter(k => k.anzahl === 0);
+    const all = (await admin.get('/api/kategorien')).body;
+    // alle leeren löschen, bis nur noch belegte übrig sind
+    for (const k of kats) await admin.del(`/api/kategorien/${k.id}`);
+    const rest = (await admin.get('/api/kategorien')).body;
+    assert.deepEqual(rest.map(k => k.name), ['Flaschen'], `vorher: ${all.map(k => k.name)}`);
+    // Flaschen leeren, dann ist sie die letzte -> darf nicht gelöscht werden
+    for (const i of (await admin.get('/api/equipment')).body) await admin.del(`/api/equipment/${i.id}`);
+    const r = await admin.del(`/api/kategorien/${rest[0].id}`);
+    assert.equal(r.status, 409);
+    assert.match(r.body.error, /Mindestens eine Kategorie/);
 });

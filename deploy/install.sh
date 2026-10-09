@@ -40,13 +40,13 @@ echo "Node.js $(node -v)"
 
 info "Benutzer und Ordner anlegen"
 id "$SERVICE_USER" &>/dev/null || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR" "$DATA_DIR/backups"
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR" "$DATA_DIR/backups" "$DATA_DIR/uploads"
 install -d -m 755 "$APP_DIR"
 install -d -m 750 -g "$SERVICE_USER" /etc/equiply
 
 info "Programmdateien nach $APP_DIR kopieren"
 rsync -a --delete \
-    --exclude .git --exclude node_modules --exclude data --exclude .env --exclude '*.db*' --exclude test \
+    --exclude .git --exclude node_modules --exclude data --exclude .env --exclude '*.db*' --exclude test --exclude '*.tar.gz' \
     "$SRC_DIR/" "$APP_DIR/"
 cd "$APP_DIR"
 npm ci --omit=dev --no-audit --no-fund --loglevel=error
@@ -54,23 +54,25 @@ chown -R root:root "$APP_DIR"   # Code gehört root, der Dienst kann ihn nur les
 
 if [[ -n "$DOMAIN" ]]; then HOST=127.0.0.1; else HOST=0.0.0.0; fi
 
-NEW_SUPERADMIN_PW=""
 if [[ ! -f "$ENV_FILE" ]]; then
     info "Konfiguration erzeugen ($ENV_FILE)"
-    NEW_SUPERADMIN_PW="$(openssl rand -base64 18 2>/dev/null || node -e "console.log(require('crypto').randomBytes(18).toString('base64'))")"
     cat > "$ENV_FILE" <<EOF
 PORT=3000
 HOST=$HOST
 DB_PATH=$DATA_DIR/equiply.db
+UPLOAD_DIR=$DATA_DIR/uploads
 JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-JWT_EXPIRES_IN=24h
-SUPERADMIN_USER=superadmin
-SUPERADMIN_PASSWORD=$NEW_SUPERADMIN_PW
+SESSION_DAYS=14
+# true = weitere Vereine dürfen sich auf diesem Server selbst registrieren
+ALLOW_REGISTRATION=false
 EOF
 else
     echo "Bestehende Konfiguration bleibt erhalten."
     sed -i "s/^HOST=.*/HOST=$HOST/" "$ENV_FILE"
     grep -q '^HOST=' "$ENV_FILE" || echo "HOST=$HOST" >> "$ENV_FILE"
+    grep -q '^UPLOAD_DIR=' "$ENV_FILE" || echo "UPLOAD_DIR=$DATA_DIR/uploads" >> "$ENV_FILE"
+    # Einstellungen aus älteren Versionen entfernen (Superadmin gibt es nicht mehr)
+    sed -i '/^SUPERADMIN_USER=/d; /^SUPERADMIN_PASSWORD=/d; /^JWT_EXPIRES_IN=/d' "$ENV_FILE"
 fi
 chown root:"$SERVICE_USER" "$ENV_FILE"
 chmod 640 "$ENV_FILE"
@@ -106,13 +108,14 @@ systemctl daemon-reload
 systemctl enable equiply >/dev/null 2>&1
 systemctl restart equiply
 
-info "Tägliches Datenbank-Backup einrichten ($DATA_DIR/backups, 14 Tage)"
+info "Tägliches Backup einrichten ($DATA_DIR/backups, Datenbank 14 Tage + Fotos)"
 cat > /etc/cron.daily/equiply-backup <<EOF
 #!/bin/sh
 [ -f $DATA_DIR/equiply.db ] || exit 0
 sqlite3 $DATA_DIR/equiply.db ".backup '$DATA_DIR/backups/equiply-\$(date +%F).db'"
 chown $SERVICE_USER:$SERVICE_USER $DATA_DIR/backups/*.db
 find $DATA_DIR/backups -name 'equiply-*.db' -mtime +14 -delete
+rsync -a $DATA_DIR/uploads/ $DATA_DIR/backups/uploads/
 EOF
 chmod 755 /etc/cron.daily/equiply-backup
 
@@ -159,13 +162,9 @@ else
     echo "Equiply läuft unter:  http://${IP:-SERVER-IP}:3000"
     echo "Hinweis: ohne Domain gibt es kein HTTPS – Passwörter gehen unverschlüsselt übers Netz."
 fi
-if [[ -n "$NEW_SUPERADMIN_PW" ]]; then
-    echo
-    echo "Superadmin-Zugang (im Login-Fenster 5x schnell auf den Schriftzug \"Equiply.\" klicken):"
-    echo "   Benutzer: superadmin"
-    echo "   Passwort: $NEW_SUPERADMIN_PW"
-    echo "   (steht auch in $ENV_FILE)"
-fi
+echo
+echo ">> Jetzt die Adresse im Browser öffnen und den Verein einrichten."
+echo "   Wer die Seite zuerst öffnet, wird Admin – also am besten sofort erledigen."
 echo
 echo "Nützliche Befehle:"
 echo "   systemctl status equiply      Status"
