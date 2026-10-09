@@ -1,5 +1,6 @@
 const QRCode = require('qrcode');
 const JSZip = require('jszip');
+const { qrPngWithCode } = require('../qrimage');
 const { HttpError, normalizeCode, isValidCode, requireId } = require('../util');
 const { requirePermission } = require('../session');
 
@@ -15,7 +16,8 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
     const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 
     // PNG in hoher Auflösung (1000 px) – reicht auch zum Lasern und für große Schilder
-    const pngFor = (req, code) => QRCode.toBuffer(`${baseUrl(req)}/q/${code}`, { type: 'png', width: 1000, margin: 2, errorCorrectionLevel: 'M' });
+    // Bild mit dem Code als Text darunter
+    const pngFor = async (req, code) => qrPngWithCode(`${baseUrl(req)}/q/${code}`, code);
     const fileName = (text) => text.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
 
     async function sendPng(req, res, code, filename) {

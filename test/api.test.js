@@ -357,6 +357,10 @@ test('QR-Code als PNG-Bild herunterladen', async () => {
     assert.equal(r.headers.get('content-type'), 'image/png');
     assert.ok(r.body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'echtes PNG');
     assert.equal(r.body.readUInt32BE(16), 1000, '1000 px breit');
+    assert.ok(r.body.readUInt32BE(20) > 1000, 'höher als breit: Code steht unter dem QR-Code');
+    const { PNG } = require('pngjs');
+    const img = PNG.sync.read(r.body);
+    assert.equal(require('jsqr')(new Uint8ClampedArray(img.data), img.width, img.height).data, `${srv.base}/q/${item.qrCode}`, 'Bild ist scannbar');
     assert.match(r.headers.get('content-disposition'), new RegExp(`QR-Code-${item.deviceId}-Flasche-12L-rot\\.png`));
     const byCode = await admin.get(`/api/qr/${item.qrCode}/png`);
     assert.deepEqual(byCode.body, r.body, 'gleicher Code, gleiches Bild');
