@@ -1,8 +1,10 @@
 const QRCode = require('qrcode');
+const JSZip = require('jszip');
 const { HttpError, normalizeCode, isValidCode, requireId } = require('../util');
 const { requirePermission } = require('../session');
 
 const MAX_FREE_CODES = 210; // 10 Etikettenbögen
+const MAX_ZIP = 500;
 
 module.exports = function qrRoutes(app, { db, sessions, inventory }) {
     const { authenticate } = sessions;
@@ -16,8 +18,11 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
     }
 
     // PNG in hoher Auflösung (1000 px) – reicht auch zum Lasern und für große Schilder
+    const pngFor = (req, code) => QRCode.toBuffer(`${baseUrl(req)}/q/${code}`, { type: 'png', width: 1000, margin: 2, errorCorrectionLevel: 'M' });
+    const fileName = (text) => text.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+
     async function sendPng(req, res, code, filename) {
-        const png = await QRCode.toBuffer(`${baseUrl(req)}/q/${code}`, { type: 'png', width: 1000, margin: 2, errorCorrectionLevel: 'M' });
+        const png = await pngFor(req, code);
         res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
         if (req.query.download) {
             const ascii = filename.replace(/[^A-Za-z0-9_.-]+/g, '-');
@@ -61,6 +66,38 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         res.json({ message: 'Code gelöscht.' });
     });
 
+    // Mehrere QR-Codes als Bilder in einer ZIP-Datei (?ids=1,2,3 für Geräte oder ?codes=A,B für freie Codes)
+    app.get('/api/qr/bilder.zip', authenticate, async (req, res) => {
+        const files = [];
+        if (req.query.codes) {
+            const own = db.prepare(`SELECT code FROM qr_codes WHERE code = ? AND verein_id = ?`);
+            for (const raw of String(req.query.codes).split(',')) {
+                const code = normalizeCode(raw);
+                if (own.get(code, req.user.verein_id)) files.push({ code, name: `QR-Code ${code}.png` });
+            }
+        } else {
+            const ids = [...new Set(String(req.query.ids || '').split(',').map(Number).filter(n => Number.isInteger(n) && n > 0))];
+            for (const id of ids) {
+                const item = db.prepare(`SELECT id, device_id, name FROM equipment WHERE id = ? AND verein_id = ?`).get(id, req.user.verein_id);
+                if (!item) continue;
+                const code = inventory.codeOf(item.id) || inventory.newCode(req.user.verein_id, item.id);
+                files.push({ code, name: `${fileName(`${item.device_id} ${item.name}`)}.png` });
+            }
+        }
+        if (!files.length) throw new HttpError(400, 'Keine QR-Codes ausgewählt.');
+        if (files.length > MAX_ZIP) throw new HttpError(400, `Maximal ${MAX_ZIP} QR-Codes auf einmal.`);
+        const zip = new JSZip();
+        const used = new Set();
+        for (const f of files) {
+            let name = f.name;
+            for (let n = 2; used.has(name); n++) name = f.name.replace(/\.png$/, ` (${n}).png`);
+            used.add(name);
+            zip.file(name, await pngFor(req, f.code));
+        }
+        const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' });
+        res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="QR-Codes.zip"' }).send(buf);
+    });
+
     // Was steckt hinter einem gescannten Code?
     app.get('/api/qr/:code', authenticate, (req, res) => {
         const code = normalizeCode(req.params.code);
@@ -88,8 +125,7 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
     app.get('/api/equipment/:id/qr.png', authenticate, async (req, res) => {
         const item = inventory.getItem(req.user.verein_id, req.params.id);
         const code = inventory.codeOf(item.id) || inventory.newCode(req.user.verein_id, item.id);
-        const name = item.name.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60);
-        await sendPng(req, res, code, `QR-Code ${item.device_id} ${name}.png`);
+        await sendPng(req, res, code, `QR-Code ${fileName(`${item.device_id} ${item.name}`)}.png`);
     });
 
     // QR-Code eines Geräts (für Etiketten)

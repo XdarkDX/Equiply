@@ -352,3 +352,22 @@ test('QR-Code als PNG-Bild herunterladen', async () => {
     assert.deepEqual(byCode.body, r.body, 'gleicher Code, gleiches Bild');
     assert.equal((await client(srv.base).get(`/api/qr/${item.qrCode}/png`)).status, 401);
 });
+
+test('Mehrere QR-Codes als ZIP mit PNG-Bildern', async () => {
+    const JSZip = require('jszip');
+    const kat = (await admin.get('/api/kategorien')).body[0].id;
+    const a = (await admin.post('/api/equipment', { name: 'ZIP A', kategorie_id: kat })).body;
+    const b = (await admin.post('/api/equipment', { name: 'ZIP/B', kategorie_id: kat })).body;
+    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},99999`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('content-type'), 'application/zip');
+    const zip = await JSZip.loadAsync(r.body);
+    assert.deepEqual(Object.keys(zip.files).sort(), [`${a.deviceId} ZIP A.png`, `${b.deviceId} ZIP B.png`].sort());
+    const png = await zip.file(`${a.deviceId} ZIP A.png`).async('nodebuffer');
+    assert.deepEqual(png, (await admin.get(`/api/equipment/${a.id}/qr.png`)).body);
+
+    const frei = (await admin.post('/api/qr/frei', { anzahl: 2 })).body.codes;
+    const z2 = await JSZip.loadAsync((await admin.get(`/api/qr/bilder.zip?codes=${frei.join(',')},FREMD1`)).body);
+    assert.deepEqual(Object.keys(z2.files).sort(), frei.map(c => `QR-Code ${c}.png`).sort());
+    assert.equal((await admin.get('/api/qr/bilder.zip?ids=')).status, 400);
+});

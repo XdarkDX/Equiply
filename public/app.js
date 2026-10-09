@@ -17,6 +17,7 @@ const state = {
     detailImage: 0,
     settingsTab: null,
     importPreview: null,
+    qr: { tab: 'etiketten', kategorie: null, search: '', selected: new Set() },
 };
 
 function storageGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
@@ -762,7 +763,7 @@ async function commitImport(btn) {
 function settingsTabs() {
     const tabs = [];
     if (can('can_manage_users')) tabs.push(['members', 'Mitglieder'], ['roles', 'Rollen']);
-    if (can('can_manage_items')) tabs.push(['categories', 'Kategorien'], ['qr', 'QR-Codes']);
+    if (can('can_manage_items')) tabs.push(['categories', 'Kategorien']);
     if (state.me.role === 'admin') tabs.push(['verein', 'Verein']);
     if (can('can_manage_users')) tabs.push(['log', 'Protokoll']);
     return tabs;
@@ -846,36 +847,10 @@ async function renderSettings() {
                     </div>
                     <p class="text-xs text-slate-500 mt-2">Wird für Knöpfe, Markierungen und die Login-Seite verwendet. Sehr helle Farben werden automatisch etwas abgedunkelt.</p>
                 </div>
-                <div>
-                    <label class="label">Adresse für QR-Codes</label>
-                    <input name="qr_url" class="input font-mono" value="${esc(v.qr_url || '')}" placeholder="${esc(location.origin)}" autocapitalize="none" autocorrect="off" spellcheck="false">
-                    <p class="text-xs text-slate-500 mt-2">Diese Adresse steckt in jedem QR-Code. Am besten einmal festlegen, bevor Schilder gemacht werden. Leer lassen = ${esc(location.origin)}</p>
-                </div>
                 <button class="btn-primary">Speichern</button></form>
                 <div class="mt-8 text-sm text-slate-500 space-y-2 max-w-xl">
                     <p><b class="text-slate-700">Datensicherung:</b> Über „Export“ kannst du jederzeit das komplette Inventar als Excel-Datei herunterladen. Zusätzlich sichert der Server täglich automatisch die Datenbank.</p>
                 </div>`;
-        } else if (tab === 'qr') {
-            const frei = await api('/qr/frei');
-            body.innerHTML = `<div class="space-y-6 max-w-2xl">
-                <p class="text-sm text-slate-600">Jedes Gerät hat automatisch seinen eigenen QR-Code. Er ändert sich nie – du findest ihn im Gerät unter <b>„QR-Code“</b>.</p>
-                <div class="border-t border-slate-100 pt-6">
-                    <h3 class="font-bold mb-1">QR-Codes auf Vorrat</h3>
-                    <p class="text-sm text-slate-500 mb-3">Schilder schon vorher machen (z. B. lasern)? Codes hier erzeugen. Später das Schild mit <b>„Scannen“</b> einem Gerät zuordnen.</p>
-                    <form data-form="qr-generate" class="flex items-end gap-3 flex-wrap">
-                        <div><label class="label">Anzahl</label><input name="anzahl" type="number" min="1" max="210" value="21" class="input w-28"></div>
-                        <button class="btn-primary">Erzeugen & drucken</button>
-                    </form>
-                </div>
-                <div>
-                    <div class="flex justify-between items-center mb-2"><h3 class="font-bold">Noch nicht zugeordnet (${frei.length})</h3>
-                        ${frei.length ? `<button data-action="print-free-codes" class="btn-outline">${ICON.qr}Alle drucken</button>` : ''}</div>
-                    ${frei.length ? `<div class="flex flex-wrap gap-2">${frei.map(f => `<span class="inline-flex items-center gap-1 bg-slate-100 rounded-lg pl-3 pr-1 py-1 font-mono text-sm">${esc(f.code)}
-                        <a href="/api/qr/${esc(f.code)}/png?download=1" class="icon-btn p-1" title="Als Bild herunterladen">↓</a>
-                        <button data-action="delete-free-code" data-code="${esc(f.code)}" class="icon-btn p-1 hover:text-red-600" title="Löschen">✕</button></span>`).join('')}</div>`
-                        : '<p class="text-sm text-slate-400">Keine.</p>'}
-                </div>
-            </div>`;
         } else if (tab === 'log') {
             const rows = await api('/aktivitaeten?limit=300');
             body.innerHTML = `<p class="text-sm text-slate-500 mb-4">Die letzten ${rows.length} Aktionen im Verein.</p>${activityList(rows, true)}`;
@@ -1043,6 +1018,110 @@ function renderCodeAssignList(search) {
 }
 
 // =====================================================================
+// QR-Codes: zentraler Bereich (Etiketten & Bilder, freie Codes, Adresse)
+// =====================================================================
+function qrTabs() {
+    const tabs = [['etiketten', 'Etiketten & Bilder']];
+    if (can('can_manage_items')) tabs.push(['frei', 'Freie Codes']);
+    if (state.me.role === 'admin') tabs.push(['adresse', 'Adresse']);
+    return tabs;
+}
+
+function openQrCenter() {
+    // Startet mit dem, was gerade in der Übersicht angezeigt wird
+    state.qr = { tab: 'etiketten', kategorie: state.filter.kategorie, search: '', selected: new Set(filteredItems().map(i => i.id)) };
+    openModal('qr-center');
+    renderQrCenter();
+}
+
+function qrVisibleItems() {
+    const words = state.qr.search.toLowerCase().split(/\s+/).filter(Boolean);
+    return state.items.filter(i => (!state.qr.kategorie || i.kategorie_id === state.qr.kategorie)
+        && words.every(w => `${i.name} ${i.deviceId} ${i.category} ${i.lagerort || ''}`.toLowerCase().includes(w)));
+}
+
+async function renderQrCenter() {
+    const tabs = qrTabs();
+    if (!tabs.some(t => t[0] === state.qr.tab)) state.qr.tab = 'etiketten';
+    $('#qr-tabs').innerHTML = tabs.map(([k, l]) => `<button data-action="qr-tab" data-tab="${k}" class="tab ${state.qr.tab === k ? 'tab-on' : 'tab-off'}">${l}</button>`).join('');
+    const body = $('#qr-body');
+
+    if (state.qr.tab === 'etiketten') {
+        // Auswahl auf vorhandene Geräte beschränken (z. B. nach dem Löschen)
+        const existing = new Set(state.items.map(i => i.id));
+        for (const id of state.qr.selected) if (!existing.has(id)) state.qr.selected.delete(id);
+        body.innerHTML = `
+            <p class="text-sm text-slate-500 mb-4">Geräte auswählen und die QR-Codes als Etiketten drucken oder als Bilder herunterladen. Jedes Gerät behält seinen QR-Code für immer.</p>
+            <div class="flex flex-col sm:flex-row gap-2 mb-3">
+                <input data-input="qr-search" class="input" placeholder="Suchen: Name, Nummer, Lagerort" value="${esc(state.qr.search)}">
+                <select data-change="qr-kategorie" class="input sm:w-56">
+                    <option value="">Alle Kategorien</option>
+                    ${state.kategorien.map(k => `<option value="${k.id}" ${state.qr.kategorie === k.id ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}
+                </select>
+            </div>
+            <div id="qr-list"></div>
+            <div class="flex flex-col sm:flex-row gap-2 mt-4 sm:items-center">
+                <span id="qr-count" class="text-sm text-slate-500 sm:mr-auto"></span>
+                <button data-action="qr-print" class="btn-primary">${ICON.qr}Etiketten drucken</button>
+                <button data-action="qr-zip" class="btn-outline">Als Bilder herunterladen</button>
+            </div>`;
+        renderQrList();
+    } else if (state.qr.tab === 'frei') {
+        const frei = await api('/qr/frei');
+        body.innerHTML = `
+            <p class="text-sm text-slate-500 mb-4">Für Schilder, die du schon machen willst, bevor das Gerät eingetragen ist (z. B. zum Lasern). Später das Schild mit <b>„Scannen“</b> scannen und einem Gerät zuordnen.</p>
+            <form data-form="qr-generate" class="flex items-end gap-3 flex-wrap mb-6">
+                <div><label class="label">Anzahl</label><input name="anzahl" type="number" min="1" max="210" value="21" class="input w-28"></div>
+                <button class="btn-primary">Codes erzeugen</button>
+            </form>
+            <div class="flex justify-between items-center gap-2 mb-2 flex-wrap">
+                <h3 class="font-bold">Freie Codes (${frei.length})</h3>
+                ${frei.length ? `<div class="flex gap-2">
+                    <button data-action="print-free-codes" class="btn-primary">${ICON.qr}Etiketten drucken</button>
+                    <button data-action="free-zip" class="btn-outline">Als Bilder herunterladen</button></div>` : ''}
+            </div>
+            ${frei.length ? `<div class="flex flex-wrap gap-2">${frei.map(f => `<span class="inline-flex items-center gap-1 bg-slate-100 rounded-lg pl-3 pr-1 py-1 font-mono text-sm">${esc(f.code)}
+                <a href="/api/qr/${esc(f.code)}/png?download=1" class="icon-btn p-1" title="Als Bild herunterladen">↓</a>
+                <button data-action="delete-free-code" data-code="${esc(f.code)}" class="icon-btn p-1 hover:text-red-600" title="Löschen">✕</button></span>`).join('')}</div>`
+                : '<p class="text-sm text-slate-400">Keine freien Codes vorhanden.</p>'}`;
+    } else if (state.qr.tab === 'adresse') {
+        body.innerHTML = `
+            <form data-form="qr-url" class="max-w-xl space-y-4">
+                <div>
+                    <label class="label">Adresse im QR-Code</label>
+                    <input name="qr_url" class="input font-mono" value="${esc(state.me.verein.qr_url || '')}" placeholder="${esc(location.origin)}" autocapitalize="none" autocorrect="off" spellcheck="false">
+                </div>
+                <p class="text-sm text-slate-500">Diese Adresse öffnet sich, wenn jemand einen QR-Code mit der Handykamera scannt. Am besten einmal festlegen, <b>bevor</b> Schilder gemacht werden – z. B. eure eigene Domain. Leer lassen = ${esc(location.origin)}</p>
+                <button class="btn-primary">Speichern</button>
+            </form>`;
+    }
+}
+
+function renderQrList() {
+    const items = qrVisibleItems();
+    const all = items.length && items.every(i => state.qr.selected.has(i.id));
+    $('#qr-list').innerHTML = items.length ? `
+        <label class="flex items-center gap-3 px-3 py-2 text-sm font-bold text-slate-600 cursor-pointer">
+            <input type="checkbox" data-change="qr-all" class="w-4 h-4" ${all ? 'checked' : ''}> Alle ${items.length} auswählen
+        </label>
+        <div class="max-h-[42vh] overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-100">
+            ${items.map(i => `<label class="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" data-change="qr-select" data-id="${i.id}" class="w-4 h-4 shrink-0" ${state.qr.selected.has(i.id) ? 'checked' : ''}>
+                <span class="font-mono text-xs text-slate-400 w-12 shrink-0">${esc(i.deviceId)}</span>
+                <span class="font-bold truncate">${esc(i.name)}</span>
+                <span class="text-xs text-slate-400 ml-auto shrink-0">${esc(i.category)}</span>
+            </label>`).join('')}
+        </div>` : '<p class="text-sm text-slate-400 py-6 text-center">Keine Geräte gefunden.</p>';
+    renderQrCount();
+}
+
+function renderQrCount() {
+    const n = state.qr.selected.size;
+    const box = $('#qr-count');
+    if (box) box.innerHTML = `<b>${n}</b> ${n === 1 ? 'Gerät' : 'Geräte'} ausgewählt`;
+}
+
+// =====================================================================
 // Aktionen (Klicks)
 // =====================================================================
 const findItem = (id) => state.items.find(i => i.id === Number(id)) || (state.detail && state.detail.id === Number(id) ? state.detail : null);
@@ -1051,6 +1130,17 @@ async function afterChange(message) {
     if (message) toast(message);
     await loadData();
     await refreshDetail();
+    if (!$('#qr-center').hidden) renderQrCenter(); // QR-Bereich bleibt auf dem neuesten Stand
+}
+
+// Datei herunterladen, ohne die Seite zu verlassen
+function downloadFile(url) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
 }
 
 const actions = {
@@ -1106,7 +1196,7 @@ const actions = {
     async 'delete-free-code'(el) {
         if (!await confirmDialog(`Freien Code ${el.dataset.code} löschen?\nNur löschen, wenn es dafür kein Schild gibt.`)) return;
         await api(`/qr/frei/${el.dataset.code}`, { method: 'DELETE' });
-        renderSettings();
+        renderQrCenter();
     },
     'reset-color': () => {
         const input = $('#settings-body input[name=farbe]');
@@ -1165,10 +1255,22 @@ const actions = {
         openModal('tuev-modal');
     },
     'print-label': (el) => window.open(`/etiketten.html?ids=${el.dataset.id}`, '_blank'),
-    'print-labels': () => {
-        const ids = filteredItems().map(i => i.id);
-        if (!ids.length) return toast('Keine Geräte ausgewählt.', 'error');
+    'open-qr': () => openQrCenter(),
+    'qr-tab': (el) => { state.qr.tab = el.dataset.tab; renderQrCenter(); },
+    'qr-print': () => {
+        const ids = [...state.qr.selected];
+        if (!ids.length) return toast('Bitte mindestens ein Gerät auswählen.', 'error');
         window.open(`/etiketten.html?ids=${ids.join(',')}`, '_blank');
+    },
+    'qr-zip': () => {
+        const ids = [...state.qr.selected];
+        if (!ids.length) return toast('Bitte mindestens ein Gerät auswählen.', 'error');
+        if (ids.length > 500) return toast('Maximal 500 Bilder auf einmal.', 'error');
+        downloadFile(`/api/qr/bilder.zip?ids=${ids.join(',')}`);
+    },
+    async 'free-zip'() {
+        const frei = await api('/qr/frei');
+        downloadFile(`/api/qr/bilder.zip?codes=${frei.map(f => f.code).join(',')}`);
     },
     async 'delete-image'(el) {
         if (!await confirmDialog('Dieses Foto löschen?')) return;
@@ -1339,14 +1441,20 @@ const forms = {
         closeModal('qr-change-modal');
         await afterChange(`QR-Code ${r.code} zugeordnet.`);
     },
+    async 'qr-url'(form) {
+        await api('/verein', { method: 'PUT', body: { name: state.me.verein.name, qr_url: form.elements.qr_url.value } });
+        state.me = await api('/me');
+        toast('Gespeichert.');
+        renderQrCenter();
+    },
     async 'qr-generate'(form) {
         const r = await api('/qr/frei', { method: 'POST', body: { anzahl: Number(form.elements.anzahl.value) } });
-        window.open(`/etiketten.html?codes=${r.codes.join(',')}`, '_blank');
-        renderSettings();
+        toast(`${r.codes.length} freie Codes erzeugt.`);
+        renderQrCenter();
     },
     async verein(form) {
         const v = formValues(form);
-        await api('/verein', { method: 'PUT', body: { name: v.name, farbe: v.farbe === DEFAULT_COLOR ? null : v.farbe, qr_url: v.qr_url } });
+        await api('/verein', { method: 'PUT', body: { name: v.name, farbe: v.farbe === DEFAULT_COLOR ? null : v.farbe } });
         state.me = await api('/me');
         applyBranding(state.me.verein);
         toast('Gespeichert.');
@@ -1400,6 +1508,7 @@ let searchTimer;
 document.addEventListener('input', (e) => {
     if (e.target.dataset.input === 'farbe') applyTheme(e.target.value);
     if (e.target.dataset.input === 'code-assign-search') renderCodeAssignList(e.target.value);
+    if (e.target.dataset.input === 'qr-search') { state.qr.search = e.target.value; renderQrList(); }
     if (e.target.dataset.input === 'search') {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => { state.filter.search = e.target.value; renderInventory(); }, 120);
@@ -1412,6 +1521,9 @@ document.addEventListener('change', async (e) => {
         if (t.dataset.change === 'status-filter') { state.filter.status = t.value; render(); }
         if (t.dataset.change === 'import-file') await previewImport(t.files[0]);
         if (t.dataset.change === 'scan-photo' && t.files[0]) { await scanPhoto(t.files[0]); t.value = ''; }
+        if (t.dataset.change === 'qr-kategorie') { state.qr.kategorie = t.value ? Number(t.value) : null; renderQrList(); }
+        if (t.dataset.change === 'qr-select') { t.checked ? state.qr.selected.add(Number(t.dataset.id)) : state.qr.selected.delete(Number(t.dataset.id)); renderQrCount(); }
+        if (t.dataset.change === 'qr-all') { for (const i of qrVisibleItems()) t.checked ? state.qr.selected.add(i.id) : state.qr.selected.delete(i.id); renderQrList(); }
         if (t.dataset.change === 'logo-upload' && t.files[0]) {
             const logo = await prepareLogo(t.files[0]);
             await api('/verein/logo', { method: 'POST', raw: logo });
