@@ -44,7 +44,6 @@
     .label-sheet { @apply grid grid-cols-3 gap-x-[2.5mm] mx-auto; width: 195.6mm; }
     .label-item { @apply flex items-center gap-[3mm] overflow-hidden border border-dashed border-slate-300 bg-white; height: 38.1mm; padding: 3mm; }
     .label-item > img { width: 30mm; height: 30mm; flex-shrink: 0; }
-    .label-logo { height: 6mm; width: auto; max-width: 28mm; object-fit: contain; margin-bottom: 1mm; }
     @media print {
         .no-print { display: none !important; }
         .label-item { border-color: transparent; }

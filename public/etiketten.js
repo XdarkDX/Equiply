@@ -3,9 +3,7 @@
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function brand(me) {
-    return me.verein.logo
-        ? `<img src="${esc(me.verein.logo)}" alt="" class="label-logo">`
-        : `<div class="text-[7pt] text-slate-500 truncate">${esc(me.verein.name)}</div>`;
+    return `<div class="text-[7pt] text-slate-500 truncate">${esc(me.verein.name)}</div>`;
 }
 
 async function load() {
@@ -42,7 +40,7 @@ async function load() {
                 ${brand(me)}
                 <div class="font-mono font-extrabold text-[16pt]">${esc(i.deviceId)}</div>
                 <div class="font-bold text-[9pt] line-clamp-2 break-words">${esc(i.name)}</div>
-                <div class="text-[7pt] text-slate-500 truncate">${esc(i.category)} · QR ${esc(i.qr_code)}</div>
+                <div class="text-[7pt] text-slate-500 truncate">${esc(i.category)}</div>
             </div>
         </div>`).join('');
 }

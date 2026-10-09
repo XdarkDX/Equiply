@@ -15,6 +15,17 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         return (v && v.qr_url) || `${req.protocol}://${req.get('host')}`;
     }
 
+    // PNG in hoher Auflösung (1000 px) – reicht auch zum Lasern und für große Schilder
+    async function sendPng(req, res, code, filename) {
+        const png = await QRCode.toBuffer(`${baseUrl(req)}/q/${code}`, { type: 'png', width: 1000, margin: 2, errorCorrectionLevel: 'M' });
+        res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
+        if (req.query.download) {
+            const ascii = filename.replace(/[^A-Za-z0-9_.-]+/g, '-');
+            res.set('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        }
+        res.send(png);
+    }
+
     async function sendSvg(req, res, code) {
         const svg = await QRCode.toString(`${baseUrl(req)}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
         res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'private, max-age=300' });
@@ -59,11 +70,26 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         res.json(row.equipment_id ? { code, status: 'zugeordnet', equipment_id: row.equipment_id } : { code, status: 'frei' });
     });
 
+    app.get('/api/qr/:code/png', authenticate, async (req, res) => {
+        const code = normalizeCode(req.params.code);
+        const row = db.prepare(`SELECT verein_id FROM qr_codes WHERE code = ?`).get(code);
+        if (!row || row.verein_id !== req.user.verein_id) throw new HttpError(404, 'QR-Code nicht gefunden.');
+        await sendPng(req, res, code, `QR-Code ${code}.png`);
+    });
+
     app.get('/api/qr/:code/svg', authenticate, async (req, res) => {
         const code = normalizeCode(req.params.code);
         const row = db.prepare(`SELECT verein_id FROM qr_codes WHERE code = ?`).get(code);
         if (!row || row.verein_id !== req.user.verein_id) throw new HttpError(404, 'QR-Code nicht gefunden.');
         await sendSvg(req, res, code);
+    });
+
+    // QR-Code eines Geräts als Bild zum Herunterladen, Dateiname mit Nummer und Name
+    app.get('/api/equipment/:id/qr.png', authenticate, async (req, res) => {
+        const item = inventory.getItem(req.user.verein_id, req.params.id);
+        const code = inventory.codeOf(item.id) || inventory.newCode(req.user.verein_id, item.id);
+        const name = item.name.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60);
+        await sendPng(req, res, code, `QR-Code ${item.device_id} ${name}.png`);
     });
 
     // QR-Code eines Geräts (für Etiketten)

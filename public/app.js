@@ -550,9 +550,7 @@ function renderDetail() {
         primaryAction(i, 'py-2.5'),
         can('can_manage_items') ? `<button data-action="edit-item" data-id="${i.id}" class="btn-outline">${ICON.edit}Bearbeiten</button>` : '',
         can('can_manage_items') && tuevStatus(i.tuev) !== 'expired' && i.tuev ? `<button data-action="renew-tuev" data-id="${i.id}" class="btn-outline">TÜV erneuern</button>` : '',
-        `<button data-action="print-label" data-id="${i.id}" class="btn-outline">${ICON.qr}Etikett</button>`,
-        i.qr_code ? `<a href="/api/qr/${i.qr_code}/svg?download=1" class="btn-outline" title="QR-Code als Vektorgrafik, z. B. zum Lasern">QR als SVG</a>` : '',
-        can('can_manage_items') ? `<button data-action="change-qr" data-id="${i.id}" class="btn-outline" title="Anderen QR-Code zuordnen">QR ändern</button>` : '',
+        `<button data-action="show-qr" data-id="${i.id}" class="btn-outline">${ICON.qr}QR-Code</button>`,
         can('can_manage_items') ? `<button data-action="delete-item" data-id="${i.id}" class="btn-outline text-red-600" title="Gerät löschen">${ICON.trash}</button>` : '',
     ].filter(Boolean).join('');
 
@@ -577,7 +575,6 @@ function renderDetail() {
                     ${field('Seriennummer', esc(i.seriennummer), 'font-mono')}
                     ${field('Größe', esc(i.groesse))}
                     ${field('Lagerort', esc(i.lagerort))}
-                    ${field('QR-Code', esc(i.qr_code), 'font-mono')}
                     ${field('Erfasst am', fmtDate(i.created_at))}
                 </dl>
                 ${i.notes ? `<div class="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 whitespace-pre-line mb-5">${esc(i.notes)}</div>` : ''}
@@ -852,7 +849,7 @@ async function renderSettings() {
                 <div>
                     <label class="label">Adresse für QR-Codes</label>
                     <input name="qr_url" class="input font-mono" value="${esc(v.qr_url || '')}" placeholder="${esc(location.origin)}" autocapitalize="none" autocorrect="off" spellcheck="false">
-                    <p class="text-xs text-slate-500 mt-2">Diese Adresse steht in jedem QR-Code. <b>Vor dem Lasern von Schildern festlegen</b> – am besten eine eigene Domain (z. B. https://equiply.meinverein.de), die du dauerhaft behältst. Leer = aktuelle Adresse (${esc(location.origin)}).</p>
+                    <p class="text-xs text-slate-500 mt-2">Diese Adresse steckt in jedem QR-Code. Am besten einmal festlegen, bevor Schilder gemacht werden. Leer lassen = ${esc(location.origin)}</p>
                 </div>
                 <button class="btn-primary">Speichern</button></form>
                 <div class="mt-8 text-sm text-slate-500 space-y-2 max-w-xl">
@@ -861,23 +858,22 @@ async function renderSettings() {
         } else if (tab === 'qr') {
             const frei = await api('/qr/frei');
             body.innerHTML = `<div class="space-y-6 max-w-2xl">
-                <div class="bg-slate-50 rounded-xl p-4 text-sm text-slate-600 space-y-2">
-                    <p><b class="text-slate-800">Jedes Gerät hat einen festen QR-Code</b> (z. B. K7F3X9). Er ändert sich nie – auch nicht, wenn Name, Kategorie oder Inventarnummer geändert werden. Schilder können also dauerhaft gelasert oder graviert werden.</p>
-                    <p>Wird ein Gerät gelöscht, wird sein Code frei. Scannt man ein freies Schild, kann man es einem neuen oder vorhandenen Gerät zuordnen.</p>
-                    <p>Die Adresse im QR-Code legt der Admin unter <b>Verein</b> fest. Der eingebaute Scanner (Knopf „Scannen“) erkennt die Schilder immer – auch wenn sich die Adresse einmal ändert.</p>
+                <p class="text-sm text-slate-600">Jedes Gerät hat automatisch seinen eigenen QR-Code. Er ändert sich nie – du findest ihn im Gerät unter <b>„QR-Code“</b>.</p>
+                <div class="border-t border-slate-100 pt-6">
+                    <h3 class="font-bold mb-1">QR-Codes auf Vorrat</h3>
+                    <p class="text-sm text-slate-500 mb-3">Schilder schon vorher machen (z. B. lasern)? Codes hier erzeugen. Später das Schild mit <b>„Scannen“</b> einem Gerät zuordnen.</p>
+                    <form data-form="qr-generate" class="flex items-end gap-3 flex-wrap">
+                        <div><label class="label">Anzahl</label><input name="anzahl" type="number" min="1" max="210" value="21" class="input w-28"></div>
+                        <button class="btn-primary">Erzeugen & drucken</button>
+                    </form>
                 </div>
-                <form data-form="qr-generate" class="flex items-end gap-3 flex-wrap">
-                    <div><label class="label">Freie Codes erzeugen</label><input name="anzahl" type="number" min="1" max="210" value="21" class="input w-28"></div>
-                    <button class="btn-primary">Erzeugen & drucken</button>
-                    <p class="text-xs text-slate-500 w-full">Zum Vorab-Lasern oder für einen Vorrat an Etiketten (21 = ein A4-Bogen).</p>
-                </form>
                 <div>
-                    <div class="flex justify-between items-center mb-2"><h3 class="font-bold">Freie Codes (${frei.length})</h3>
+                    <div class="flex justify-between items-center mb-2"><h3 class="font-bold">Noch nicht zugeordnet (${frei.length})</h3>
                         ${frei.length ? `<button data-action="print-free-codes" class="btn-outline">${ICON.qr}Alle drucken</button>` : ''}</div>
                     ${frei.length ? `<div class="flex flex-wrap gap-2">${frei.map(f => `<span class="inline-flex items-center gap-1 bg-slate-100 rounded-lg pl-3 pr-1 py-1 font-mono text-sm">${esc(f.code)}
-                        <a href="/api/qr/${esc(f.code)}/svg?download=1" class="icon-btn p-1" title="SVG herunterladen">↓</a>
+                        <a href="/api/qr/${esc(f.code)}/png?download=1" class="icon-btn p-1" title="Als Bild herunterladen">↓</a>
                         <button data-action="delete-free-code" data-code="${esc(f.code)}" class="icon-btn p-1 hover:text-red-600" title="Löschen">✕</button></span>`).join('')}</div>`
-                        : '<p class="text-sm text-slate-400">Keine freien Codes.</p>'}
+                        : '<p class="text-sm text-slate-400">Keine.</p>'}
                 </div>
             </div>`;
         } else if (tab === 'log') {
@@ -1067,6 +1063,21 @@ const actions = {
         showAuth('login');
     },
     'open-scanner': () => openScanner(openScanned),
+    'show-qr': (el) => {
+        const i = findItem(el.dataset.id);
+        $('#qr-modal-content').innerHTML = `
+            <h2 class="font-extrabold text-xl">QR-Code</h2>
+            <p class="text-sm text-slate-500 mt-1">${esc(i.name)} · Nr. ${esc(i.deviceId)}</p>
+            <img src="/api/equipment/${i.id}/qr.png" alt="QR-Code" class="w-60 h-60 mx-auto my-4 rounded-lg border border-slate-100">
+            <p class="text-sm text-slate-600 mb-5">Dieser QR-Code gehört fest zu diesem Gerät und ändert sich nie.</p>
+            <div class="space-y-2">
+                <a href="/api/equipment/${i.id}/qr.png?download=1" class="btn-primary w-full py-3">Als Bild herunterladen</a>
+                <button data-action="print-label" data-id="${i.id}" class="btn-outline w-full py-3">Etikett drucken</button>
+                <button data-action="close" class="btn-light w-full py-3">Schließen</button>
+            </div>
+            ${can('can_manage_items') ? `<button data-action="change-qr" data-id="${i.id}" class="text-xs text-slate-400 hover:text-slate-700 underline mt-4">Anderes Schild verwenden</button>` : ''}`;
+        openModal('qr-modal');
+    },
     'code-new-item': () => { const code = state.pendingCode; closeModal('code-modal'); openItemForm(null, code); },
     async 'code-assign'(el) {
         const i = findItem(el.dataset.id);
@@ -1077,6 +1088,7 @@ const actions = {
         openDetail(i.id);
     },
     'change-qr': (el) => {
+        closeModal('qr-modal');
         const form = $('#qr-change-modal form');
         form.reset();
         form.elements.id.value = el.dataset.id;

@@ -369,11 +369,16 @@
     </div>
 </div>
 
+<!-- QR-Code eines Geräts -->
+<div id="qr-modal" class="overlay" hidden>
+    <div class="dialog max-w-sm text-center" id="qr-modal-content"></div>
+</div>
+
 <!-- Anderen QR-Code für ein Gerät -->
 <div id="qr-change-modal" class="overlay" hidden>
     <form data-form="qr-change" class="dialog max-w-sm">
-        <h2 class="font-extrabold text-xl mb-1">Anderen QR-Code zuordnen</h2>
-        <p class="text-sm text-slate-500 mb-5">Z. B. wenn ein schon gelasertes Schild an dieses Gerät kommt. Der bisherige Code wird frei.</p>
+        <h2 class="font-extrabold text-xl mb-1">Anderes Schild verwenden</h2>
+        <p class="text-sm text-slate-500 mb-5">Für ein schon vorhandenes QR-Schild: Schild scannen oder den Code darunter eintippen.</p>
         <input type="hidden" name="id">
         <label class="label">Code vom Schild</label>
         <div class="flex gap-2">

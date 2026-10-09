@@ -13,7 +13,7 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 - **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
 - **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
 - **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
-- **Feste QR-Codes** pro Gerät (z. B. `K7F3X9`) – ändern sich nie, auch nicht bei neuer Kategorie oder Nummer; ideal zum Lasern/Gravieren. Codes gelöschter Geräte werden frei und können neu zugeordnet werden, freie Codes lassen sich vorab erzeugen. Download als SVG zum Lasern, Etiketten für A4-Bögen (3 × 7)
+- **Feste QR-Codes** pro Gerät (z. B. `K7F3X9`) – ändern sich nie, auch nicht bei neuer Kategorie oder Nummer; ideal zum Lasern/Gravieren. Codes gelöschter Geräte werden frei und können neu zugeordnet werden, freie Codes lassen sich vorab erzeugen. Download als Bild (PNG, 1000 × 1000 px, z. B. zum Lasern), Etiketten für A4-Bögen (3 × 7)
 - **Eingebauter QR-Scanner** (Kamera oder Foto), erkennt auch helle Codes auf dunklem Metall
 - **Eigene Kategorien** mit eigenem Nummernkreis (z. B. 1001–1999, bis zu 999 Geräte pro Kategorie; Nummern gelöschter Geräte werden wiederverwendet)
 - **Vereinslogo und -farbe:** Logo hochladen, die Oberfläche übernimmt automatisch die Farbe
