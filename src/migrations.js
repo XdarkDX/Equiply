@@ -244,4 +244,24 @@ module.exports = [
             `);
         },
     },
+    {
+        version: 4,
+        name: 'Vereinslogo und -farbe, Inventarnummern dreistellig (101 -> 1001)',
+        up(db) {
+            db.exec(`
+                ALTER TABLE vereine ADD COLUMN logo TEXT;
+                ALTER TABLE vereine ADD COLUMN farbe TEXT CHECK (farbe IS NULL OR farbe GLOB '#[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]');
+            `);
+            // Kürzel + 2 Stellen -> Kürzel + 3 Stellen, damit 999 Geräte pro Kategorie möglich sind
+            const rows = db.prepare(`SELECT e.id, e.verein_id, e.device_id, k.prefix FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id`).all();
+            const taken = db.prepare(`SELECT 1 FROM equipment WHERE verein_id = ? AND device_id = ?`);
+            const update = db.prepare(`UPDATE equipment SET device_id = ? WHERE id = ?`);
+            for (const r of rows) {
+                const rest = r.device_id.slice(r.prefix.length);
+                if (!r.device_id.startsWith(r.prefix) || !/^[0-9]{2}$/.test(rest)) continue;
+                const neu = r.prefix + '0' + rest;
+                if (!taken.get(r.verein_id, neu)) update.run(neu, r.id);
+            }
+        },
+    },
 ];

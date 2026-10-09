@@ -88,14 +88,14 @@ test('Excel-Import: Vorschau erkennt Spalten, Kategorien, Fehler – erst Übern
     assert.deepEqual(imp.body.neueKategorien, ['Lampen']);
 
     const items = (await admin.get('/api/equipment')).body;
-    assert.deepEqual(items.map(i => i.deviceId).sort(), ['101', '201', '601']);
+    assert.deepEqual(items.map(i => i.deviceId).sort(), ['1001', '2001', '6001']);
     assert.equal(items.find(i => i.name === 'Flasche 12L').seriennummer, 'A-1');
 });
 
 test('Re-Import: vorhandene Inventarnummern werden aktualisiert, leere Felder bleiben', async () => {
     const file = await xlsx([
         ['Inventarnummer', 'Bezeichnung', 'Lagerort', 'Hersteller'],
-        ['101', 'Flasche 12L Stahl', 'Keller', null],
+        ['1001', 'Flasche 12L Stahl', 'Keller', null],
         ['999', 'Neue Flasche', null, null],
     ]);
     const p = (await admin.post('/api/import/vorschau', file)).body;
@@ -105,7 +105,7 @@ test('Re-Import: vorhandene Inventarnummern werden aktualisiert, leere Felder bl
     assert.equal(imp.neu, 1);
 
     const items = (await admin.get('/api/equipment')).body;
-    const f = items.find(i => i.deviceId === '101');
+    const f = items.find(i => i.deviceId === '1001');
     assert.equal(f.name, 'Flasche 12L Stahl');
     assert.equal(f.lagerort, 'Keller');
     assert.equal(f.hersteller, 'Faber', 'leere Zelle überschreibt nicht');

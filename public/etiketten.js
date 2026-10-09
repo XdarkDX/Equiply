@@ -13,7 +13,7 @@ async function load() {
         <div class="label-item">
             <img src="/api/equipment/${i.id}/qr.svg" alt="">
             <div class="min-w-0 leading-tight">
-                <div class="text-[7pt] text-slate-500 truncate">${esc(me.verein.name)}</div>
+                ${me.verein.logo ? `<img src="${esc(me.verein.logo)}" alt="" class="label-logo">` : `<div class="text-[7pt] text-slate-500 truncate">${esc(me.verein.name)}</div>`}
                 <div class="font-mono font-extrabold text-[16pt]">${esc(i.deviceId)}</div>
                 <div class="font-bold text-[9pt] line-clamp-2 break-words">${esc(i.name)}</div>
                 <div class="text-[7pt] text-slate-500 truncate">${esc(i.category)}${i.seriennummer ? ` · SN ${esc(i.seriennummer)}` : ''}</div>

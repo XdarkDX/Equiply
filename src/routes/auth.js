@@ -5,9 +5,24 @@ const { HttpError, DEFAULT_CATEGORIES, requireText, requireEmail, requirePasswor
 // Vergleichs-Hash für unbekannte Benutzernamen, damit die Antwortzeit nichts verrät
 const DUMMY_HASH = bcrypt.hashSync('dummy-passwort', 12);
 
-module.exports = function authRoutes(app, { db, config, sessions, limiter, log }) {
+module.exports = function authRoutes(app, { db, config, sessions, limiter, log, sendLogo }) {
     const { authenticate, startSession, endSession } = sessions;
     const vereinCount = db.prepare(`SELECT COUNT(*) AS c FROM vereine`);
+
+    // Logo und Farbe für die Login-Seite – nur wenn auf dem Server genau ein Verein eingerichtet ist
+    const singleVerein = () => {
+        const rows = db.prepare(`SELECT name, farbe, logo FROM vereine LIMIT 2`).all();
+        return rows.length === 1 ? rows[0] : null;
+    };
+    app.get('/api/branding', (req, res) => {
+        const v = singleVerein();
+        res.json(v ? { name: v.name, farbe: v.farbe, logo: v.logo ? `/api/branding/logo?v=${v.logo}` : null } : {});
+    });
+    app.get('/api/branding/logo', (req, res) => {
+        const v = singleVerein();
+        if (!v || !v.logo) throw new HttpError(404, 'Kein Logo.');
+        sendLogo(res, v.logo);
+    });
 
     app.get('/api/setup', (req, res) => {
         res.json({ einrichtung: vereinCount.get().c === 0, registrierung: config.allowRegistration, version });
@@ -61,7 +76,8 @@ module.exports = function authRoutes(app, { db, config, sessions, limiter, log }
     app.get('/api/me', authenticate, (req, res) => {
         const u = req.user;
         startSession(req, res, u); // Sitzung verlängern, solange die App benutzt wird
-        res.json({ id: u.id, username: u.username, email: u.email, role: u.role, permissions: u.permissions, verein: { id: u.verein_id, name: u.verein_name } });
+        res.json({ id: u.id, username: u.username, email: u.email, role: u.role, permissions: u.permissions,
+            verein: { id: u.verein_id, name: u.verein_name, farbe: u.verein_farbe, logo: u.verein_logo ? `/api/verein/logo?v=${u.verein_logo}` : null } });
     });
 
     app.put('/api/me/password', authenticate, async (req, res) => {

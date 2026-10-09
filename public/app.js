@@ -53,6 +53,75 @@ const isBroken = (i) => i.condition === 'Reparaturbedürftig';
 const can = (perm) => !!(state.me && state.me.permissions[perm]);
 const CONDITION_LABEL = { Gut: 'Einwandfrei', Gebrauchsspuren: 'Leichte Mängel', Reparaturbedürftig: 'Defekt' };
 
+// ---------- Vereinsfarbe ----------
+const DEFAULT_COLOR = '#0284c7';
+const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const rgbToHex = (c) => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+function luminance(rgb) {
+    const [r, g, b] = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+// Setzt die Akzentfarbe der ganzen Oberfläche. Zu helle Farben werden abgedunkelt, damit weiße Schrift lesbar bleibt.
+function applyTheme(hex) {
+    let base = hexToRgb(/^#[0-9a-f]{6}$/i.test(hex || '') ? hex : DEFAULT_COLOR);
+    while (luminance(base) > 0.22) base = base.map(v => Math.round(v * 0.92));
+    const tief = base.map(v => Math.round(v * 0.8));
+    const leicht = base.map(v => Math.round(v * 0.12 + 255 * 0.88));
+    const root = document.documentElement.style;
+    root.setProperty('--ozean-normal', base.join(' '));
+    root.setProperty('--ozean-tief', tief.join(' '));
+    root.setProperty('--ozean-leicht', leicht.join(' '));
+    const meta = document.querySelector('meta[name=theme-color]');
+    if (meta) meta.content = rgbToHex(tief);
+}
+// Häufigste kräftige Farbe eines Logos (ignoriert Weiß, Grau, Schwarz und Transparenz)
+async function dominantColor(blob) {
+    try {
+        const bmp = await createImageBitmap(blob);
+        const c = document.createElement('canvas');
+        c.width = c.height = 48;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(bmp, 0, 0, 48, 48);
+        const d = ctx.getImageData(0, 0, 48, 48).data;
+        const buckets = new Map();
+        for (let i = 0; i < d.length; i += 4) {
+            const [r, g, b, a] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            if (a < 128 || max < 40 || (max - min) / max < 0.3) continue;
+            const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
+            const w = (max - min) / max;
+            const e = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+            e.n += w; e.r += r * w; e.g += g * w; e.b += b * w;
+            buckets.set(key, e);
+        }
+        const best = [...buckets.values()].sort((x, y) => y.n - x.n)[0];
+        return best ? rgbToHex([best.r, best.g, best.b].map(v => Math.round(v / best.n))) : null;
+    } catch (e) { return null; }
+}
+// Logo auf max. 512 px verkleinern, Transparenz bleibt erhalten (PNG)
+async function prepareLogo(file) {
+    try {
+        const bmp = await createImageBitmap(file);
+        const scale = Math.min(1, 512 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * scale);
+        c.height = Math.round(bmp.height * scale);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        if (blob) return blob;
+    } catch (e) { /* nicht lesbar */ }
+    throw new Error('Das Logo muss ein Bild sein (PNG, JPG oder WebP).');
+}
+function applyBranding(verein) {
+    applyTheme(verein && verein.farbe);
+    const logo = verein && verein.logo;
+    $('#brand-logo').hidden = !logo;
+    $('#brand-icon').hidden = !!logo;
+    if (logo) $('#brand-logo').src = logo;
+    $('#brand-title').textContent = logo ? verein.name : 'Equiply';
+    $('#verein-name').textContent = logo ? 'Equiply' : (verein ? verein.name : '');
+}
+
 const ICON = {
     edit: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>',
     trash: '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>',
@@ -126,9 +195,10 @@ function closeModal(id) {
     const i = modalStack.indexOf(id);
     if (i >= 0) modalStack.splice(i, 1);
     if (!modalStack.length) document.body.classList.remove('overflow-hidden');
+    if (id === 'settings-modal' && state.me) applyTheme(state.me.verein.farbe); // ungespeicherte Farbvorschau verwerfen
     if (id === 'detail-modal') {
         state.detail = null;
-        if (location.hash.startsWith('#geraet/')) history.replaceState(null, '', location.pathname + location.search);
+        if (/^#(nr|geraet)\//.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     }
 }
 
@@ -184,8 +254,14 @@ async function uploadImages(itemId, files) {
 // =====================================================================
 async function boot() {
     try {
-        const setup = await api('/setup');
+        const [setup, branding] = await Promise.all([api('/setup'), api('/branding').catch(() => ({}))]);
         state.setup = setup;
+        if (branding.name) {
+            applyTheme(branding.farbe);
+            $('#auth-title').textContent = branding.name;
+            $('#auth-subtitle').textContent = 'Equipment-Verwaltung mit Equiply';
+            if (branding.logo) { $('#auth-logo').src = branding.logo; $('#auth-logo').hidden = false; $('#auth-icon').hidden = true; }
+        }
         $('#app-version').textContent = setup.version ? `v${setup.version}` : '';
         if (setup.einrichtung) return showAuth('setup');
         try {
@@ -220,7 +296,7 @@ async function startApp() {
     const me = state.me;
     $('#auth-view').hidden = true;
     $('#app-view').hidden = false;
-    $('#verein-name').textContent = me.verein.name;
+    applyBranding(me.verein);
     $('#user-initial').textContent = (me.username[0] || '?').toUpperCase();
     $('#user-name').textContent = me.username;
     $('#user-role').textContent = me.role === 'admin' ? 'Admin' : 'Mitglied';
@@ -238,9 +314,19 @@ async function loadData() {
     render();
 }
 
+// QR-Etiketten verlinken auf #nr/<Inventarnummer> – das Gerät wird über seine Nummer gesucht
 function openFromHash() {
-    const m = location.hash.match(/^#geraet\/(\d+)/);
-    if (m && state.me) openDetail(Number(m[1]));
+    if (!state.me) return;
+    const nr = location.hash.match(/^#nr\/(.+)$/);
+    if (nr) {
+        const wanted = decodeURIComponent(nr[1]).toLowerCase();
+        const item = state.items.find(i => i.deviceId.toLowerCase() === wanted);
+        if (item) openDetail(item.id);
+        else { toast(`Kein Gerät mit der Nummer ${decodeURIComponent(nr[1])} gefunden.`, 'error'); history.replaceState(null, '', location.pathname); }
+        return;
+    }
+    const old = location.hash.match(/^#geraet\/(\d+)/);
+    if (old) openDetail(Number(old[1]));
 }
 
 // =====================================================================
@@ -422,10 +508,11 @@ async function openDetail(id, { keepTab = false } = {}) {
         state.detailImage = Math.min(state.detailImage, Math.max(0, item.bilder.length - 1));
         renderDetail();
         if ($('#detail-modal').hidden) openModal('detail-modal');
-        if (location.hash !== `#geraet/${id}`) history.replaceState(null, '', `#geraet/${id}`);
+        const hash = `#nr/${encodeURIComponent(item.deviceId)}`;
+        if (location.hash !== hash) history.replaceState(null, '', hash);
     } catch (e) {
         showError(e);
-        if (location.hash.startsWith('#geraet/')) history.replaceState(null, '', location.pathname);
+        if (/^#(nr|geraet)\//.test(location.hash)) history.replaceState(null, '', location.pathname);
     }
 }
 
@@ -723,12 +810,36 @@ async function renderSettings() {
                 <button class="${k ? 'icon-btn' : 'btn-primary'}" title="Speichern">${k ? ICON.save : '+ Anlegen'}</button>
                 ${k ? `<button type="button" data-action="delete-category" data-id="${k.id}" class="icon-btn hover:text-red-600" title="Löschen">${ICON.trash}</button>` : ''}
             </form>`;
-            body.innerHTML = `<p class="text-sm text-slate-500 mb-4">Das Kürzel ist der Anfang der Inventarnummer (z. B. Kürzel 1 → 101, 102 …). Wird es geändert, behalten bestehende Geräte ihre Nummer.</p>
+            body.innerHTML = `<p class="text-sm text-slate-500 mb-4">Das Kürzel ist der Anfang der Inventarnummer (z. B. Kürzel 1 → 1001 bis 1999, bis zu 999 Geräte pro Kategorie). Nummern gelöschter Geräte werden wiederverwendet; wechselt ein Gerät die Kategorie, bekommt es eine neue Nummer. Wird es geändert, behalten bestehende Geräte ihre Nummer.</p>
                 <div class="divide-y divide-slate-100 border border-slate-100 rounded-xl">${state.kategorien.map(row).join('')}</div>
                 <div class="border border-dashed border-slate-300 rounded-xl mt-4">${row(null)}</div>`;
         } else if (tab === 'verein') {
-            body.innerHTML = `<form data-form="verein" class="max-w-md space-y-4">
-                <div><label class="label">Vereinsname</label><input name="name" class="input" required maxlength="100" value="${esc(state.me.verein.name)}"></div>
+            const v = state.me.verein;
+            body.innerHTML = `<form data-form="verein" class="max-w-xl space-y-6">
+                <div><label class="label">Vereinsname</label><input name="name" class="input" required maxlength="100" value="${esc(v.name)}"></div>
+                <div>
+                    <label class="label">Logo</label>
+                    <div class="flex items-center gap-4">
+                        <div class="w-24 h-24 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+                            ${v.logo ? `<img src="${esc(v.logo)}" alt="" class="max-w-full max-h-full object-contain p-1">` : `<span class="text-slate-300">${ICON.image}</span>`}
+                        </div>
+                        <div class="flex flex-col gap-2 items-start">
+                            <label class="btn-outline cursor-pointer">${ICON.camera}${v.logo ? 'Logo ändern' : 'Logo hochladen'}<input type="file" accept="image/*" data-change="logo-upload" class="sr-only"></label>
+                            ${v.logo ? '<button type="button" data-action="delete-logo" class="text-sm font-bold text-red-600 hover:underline">Logo entfernen</button>' : ''}
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2">Am besten ein PNG mit transparentem Hintergrund. Die Vereinsfarbe wird automatisch aus dem Logo übernommen.</p>
+                </div>
+                <div>
+                    <label class="label">Vereinsfarbe</label>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <input type="color" name="farbe" value="${esc(v.farbe || DEFAULT_COLOR)}" data-input="farbe" class="h-11 w-16 rounded-lg border border-slate-200 cursor-pointer bg-white p-1">
+                        <span class="btn-primary pointer-events-none">Vorschau</span>
+                        <span class="badge bg-ozean-leicht text-ozean-tief">Akzent</span>
+                        <button type="button" data-action="reset-color" class="text-sm font-bold text-slate-500 hover:text-slate-800">Standardfarbe</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2">Wird für Knöpfe, Markierungen und die Login-Seite verwendet. Sehr helle Farben werden automatisch etwas abgedunkelt.</p>
+                </div>
                 <button class="btn-primary">Speichern</button></form>
                 <div class="mt-8 text-sm text-slate-500 space-y-2 max-w-xl">
                     <p><b class="text-slate-700">Datensicherung:</b> Über „Export“ kannst du jederzeit das komplette Inventar als Excel-Datei herunterladen. Zusätzlich sichert der Server täglich automatisch die Datenbank.</p>
@@ -787,6 +898,19 @@ const actions = {
         state.me = null;
         location.hash = '';
         showAuth('login');
+    },
+    'reset-color': () => {
+        const input = $('#settings-body input[name=farbe]');
+        input.value = DEFAULT_COLOR;
+        applyTheme(DEFAULT_COLOR);
+    },
+    async 'delete-logo'() {
+        if (!await confirmDialog('Vereinslogo entfernen?', 'Ja, entfernen')) return;
+        await api('/verein/logo', { method: 'DELETE' });
+        state.me = await api('/me');
+        applyBranding(state.me.verein);
+        toast('Logo entfernt.');
+        renderSettings();
     },
     'toggle-password': (el) => {
         const input = el.parentElement.querySelector('input');
@@ -992,9 +1116,10 @@ const forms = {
         await loadData();
     },
     async verein(form) {
-        await api('/verein', { method: 'PUT', body: formValues(form) });
+        const v = formValues(form);
+        await api('/verein', { method: 'PUT', body: { name: v.name, farbe: v.farbe === DEFAULT_COLOR ? null : v.farbe } });
         state.me = await api('/me');
-        $('#verein-name').textContent = state.me.verein.name;
+        applyBranding(state.me.verein);
         toast('Gespeichert.');
     },
 };
@@ -1044,6 +1169,7 @@ document.addEventListener('submit', async (e) => {
 
 let searchTimer;
 document.addEventListener('input', (e) => {
+    if (e.target.dataset.input === 'farbe') applyTheme(e.target.value);
     if (e.target.dataset.input === 'search') {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => { state.filter.search = e.target.value; renderInventory(); }, 120);
@@ -1055,6 +1181,16 @@ document.addEventListener('change', async (e) => {
     try {
         if (t.dataset.change === 'status-filter') { state.filter.status = t.value; render(); }
         if (t.dataset.change === 'import-file') await previewImport(t.files[0]);
+        if (t.dataset.change === 'logo-upload' && t.files[0]) {
+            const logo = await prepareLogo(t.files[0]);
+            await api('/verein/logo', { method: 'POST', raw: logo });
+            const farbe = await dominantColor(logo);
+            if (farbe) await api('/verein', { method: 'PUT', body: { name: state.me.verein.name, farbe } });
+            state.me = await api('/me');
+            applyBranding(state.me.verein);
+            toast(farbe ? 'Logo gespeichert – die Farbe wurde aus dem Logo übernommen.' : 'Logo gespeichert.');
+            renderSettings();
+        }
         if (t.dataset.change === 'detail-upload' && t.files.length) {
             const files = [...t.files];
             const before = state.detail.bilder.length;

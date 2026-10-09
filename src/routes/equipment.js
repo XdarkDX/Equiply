@@ -3,20 +3,11 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const QRCode = require('qrcode');
-const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate } = require('../util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage } = require('../util');
 const { requirePermission } = require('../session');
 
 const MAX_IMAGES_PER_ITEM = 20;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
-// Bildtyp anhand der ersten Bytes erkennen (dem Content-Type-Header des Browsers wird nicht vertraut)
-function detectImage(buf) {
-    if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' };
-    if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { mime: 'image/png', ext: 'png' };
-    if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return { mime: 'image/webp', ext: 'webp' };
-    if (buf.length > 6 && buf.toString('ascii', 0, 4) === 'GIF8') return { mime: 'image/gif', ext: 'gif' };
-    return null;
-}
 
 module.exports = function equipmentRoutes(app, { db, config, sessions, inventory }) {
     const { authenticate } = sessions;
@@ -237,7 +228,9 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
     // --- QR-Code fürs Etikett: führt direkt zur Detailansicht des Geräts ---
     app.get('/api/equipment/:id/qr.svg', authenticate, async (req, res) => {
         const item = inventory.getItem(req.user.verein_id, req.params.id);
-        const url = `${req.protocol}://${req.get('host')}/#geraet/${item.id}`;
+        // Enthält die Inventarnummer statt der internen ID: Wird ein Gerät gelöscht und die Nummer neu vergeben,
+        // passt das alte Etikett zum neuen Gerät.
+        const url = `${req.protocol}://${req.get('host')}/#nr/${encodeURIComponent(item.device_id)}`;
         const svg = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
         res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'private, max-age=86400' }).send(svg);
     });

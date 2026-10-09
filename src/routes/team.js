@@ -1,17 +1,56 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
 const bcrypt = require('bcrypt');
-const { HttpError, requireText, requireEmail, requirePassword, requireId } = require('../util');
+const { HttpError, requireText, requireEmail, requirePassword, requireId, detectImage } = require('../util');
 const { requirePermission, requireAdmin } = require('../session');
 
-module.exports = function teamRoutes(app, { db, sessions, log }) {
+module.exports = function teamRoutes(app, { db, config, sessions, log, sendLogo }) {
     const { authenticate } = sessions;
     const canManageUsers = [authenticate, requirePermission('can_manage_users')];
 
     // --- Verein ---
     app.put('/api/verein', authenticate, requireAdmin, (req, res) => {
         const name = requireText(req.body.name, 'Vereinsname', 100);
-        db.prepare(`UPDATE vereine SET name = ? WHERE id = ?`).run(name, req.user.verein_id);
-        log(req.user.verein_id, req.user.id, null, 'verein', `Verein umbenannt in „${name}“`);
+        let farbe = req.body.farbe ? String(req.body.farbe).toLowerCase() : null;
+        if (farbe && !/^#[0-9a-f]{6}$/.test(farbe)) throw new HttpError(400, 'Farbe ist ungültig.');
+        const old = db.prepare(`SELECT name, farbe FROM vereine WHERE id = ?`).get(req.user.verein_id);
+        db.prepare(`UPDATE vereine SET name = ?, farbe = ? WHERE id = ?`).run(name, farbe, req.user.verein_id);
+        if (old.name !== name) log(req.user.verein_id, req.user.id, null, 'verein', `Verein umbenannt in „${name}“`);
+        if (old.farbe !== farbe) log(req.user.verein_id, req.user.id, null, 'verein', `Vereinsfarbe ${farbe ? `auf ${farbe} gesetzt` : 'zurückgesetzt'}`);
         res.json({ message: 'Gespeichert.' });
+    });
+
+    // --- Vereinslogo ---
+    const currentLogo = (vereinId) => db.prepare(`SELECT logo FROM vereine WHERE id = ?`).get(vereinId).logo;
+    const removeFile = (datei) => { if (datei) fs.rm(path.join(config.uploadDir, datei), { force: true }, () => {}); };
+
+    app.get('/api/verein/logo', authenticate, (req, res) => {
+        const logo = currentLogo(req.user.verein_id);
+        if (!logo) throw new HttpError(404, 'Kein Logo.');
+        sendLogo(res, logo);
+    });
+
+    app.post('/api/verein/logo', authenticate, requireAdmin, express.raw({ type: () => true, limit: 5 * 1024 * 1024 }), (req, res) => {
+        if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'Keine Bilddatei empfangen.');
+        const type = detectImage(req.body);
+        if (!type) throw new HttpError(400, 'Das Logo muss ein JPG-, PNG-, WebP- oder GIF-Bild sein.');
+        const datei = `logo-${crypto.randomBytes(12).toString('hex')}.${type.ext}`;
+        fs.writeFileSync(path.join(config.uploadDir, datei), req.body);
+        const old = currentLogo(req.user.verein_id);
+        db.prepare(`UPDATE vereine SET logo = ? WHERE id = ?`).run(datei, req.user.verein_id);
+        removeFile(old);
+        log(req.user.verein_id, req.user.id, null, 'verein', 'Vereinslogo hochgeladen');
+        res.status(201).json({ message: 'Logo gespeichert.' });
+    });
+
+    app.delete('/api/verein/logo', authenticate, requireAdmin, (req, res) => {
+        const old = currentLogo(req.user.verein_id);
+        db.prepare(`UPDATE vereine SET logo = NULL WHERE id = ?`).run(req.user.verein_id);
+        removeFile(old);
+        log(req.user.verein_id, req.user.id, null, 'verein', 'Vereinslogo entfernt');
+        res.json({ message: 'Logo entfernt.' });
     });
 
     // --- Rollen ---

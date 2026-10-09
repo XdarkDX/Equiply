@@ -1,4 +1,5 @@
 // Gemeinsame Inventar-Logik für Formular-API und Excel-Import
+const MAX_PER_CATEGORY = 999;
 const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalText, optionalDate, requireOneOf, requireId, formatDate } = require('./util');
 
 // Felder, die man bearbeiten kann, mit Anzeigenamen (für Protokoll, Export und Import)
@@ -22,10 +23,10 @@ function createInventory(db) {
         kategorien: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE verein_id = ? ORDER BY prefix`),
         kategorie: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE id = ? AND verein_id = ?`),
         deviceIdTaken: db.prepare(`SELECT id FROM equipment WHERE verein_id = ? AND device_id = ?`),
-        maxNr: db.prepare(`SELECT MAX(CAST(substr(device_id, ?) AS INTEGER)) AS nr FROM equipment WHERE verein_id = ? AND device_id GLOB ? || '[0-9]*'`),
+        usedNrs: db.prepare(`SELECT device_id FROM equipment WHERE verein_id = ? AND length(device_id) = ? AND device_id GLOB ? || '[0-9][0-9][0-9]'`),
         insert: db.prepare(`INSERT INTO equipment (verein_id, kategorie_id, device_id, name, hersteller, seriennummer, groesse, lagerort, tuev, condition, notes)
                             VALUES (@verein_id, @kategorie_id, @device_id, @name, @hersteller, @seriennummer, @groesse, @lagerort, @tuev, @condition, @notes)`),
-        update: db.prepare(`UPDATE equipment SET kategorie_id = @kategorie_id, name = @name, hersteller = @hersteller, seriennummer = @seriennummer, groesse = @groesse,
+        update: db.prepare(`UPDATE equipment SET kategorie_id = @kategorie_id, device_id = @device_id, name = @name, hersteller = @hersteller, seriennummer = @seriennummer, groesse = @groesse,
                             lagerort = @lagerort, tuev = @tuev, condition = @condition, notes = @notes WHERE id = @id`),
         byId: db.prepare(`SELECT e.*, k.name AS kategorie FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.id = ? AND e.verein_id = ?`),
         log: db.prepare(`INSERT INTO aktivitaeten (verein_id, nutzer_id, equipment_id, aktion, details) VALUES (?, ?, ?, ?, ?)`),
@@ -66,12 +67,16 @@ function createInventory(db) {
         return { id, name, prefix };
     }
 
-    // Nächste freie Inventarnummer: Kürzel + laufende Nummer (z. B. 101, 102 ... / LA01, LA02 ...)
+    // Kleinste freie Inventarnummer der Kategorie: Kürzel + 3 Stellen (1001 … 1999, LA001 … LA999).
+    // Nummern gelöschter Geräte werden so wiederverwendet – alte QR-Etiketten passen dann zum neuen Gerät.
     function nextDeviceId(vereinId, kategorie) {
-        let nr = (q.maxNr.get(kategorie.prefix.length + 1, vereinId, kategorie.prefix).nr || 0) + 1;
-        let id;
-        do { id = kategorie.prefix + String(nr++).padStart(2, '0'); } while (q.deviceIdTaken.get(vereinId, id));
-        return id;
+        const used = new Set(q.usedNrs.all(vereinId, kategorie.prefix.length + 3, kategorie.prefix)
+            .map(r => Number(r.device_id.slice(kategorie.prefix.length))));
+        for (let nr = 1; nr <= MAX_PER_CATEGORY; nr++) {
+            const id = kategorie.prefix + String(nr).padStart(3, '0');
+            if (!used.has(nr) && !q.deviceIdTaken.get(vereinId, id)) return id;
+        }
+        throw new HttpError(409, `Die Kategorie „${kategorie.name}“ ist voll (maximal ${MAX_PER_CATEGORY} Geräte).`);
     }
 
     // Prüft Formulardaten und liefert ein sauberes Objekt für die Datenbank
@@ -107,10 +112,13 @@ function createInventory(db) {
     }
 
     // Aktualisiert ein Gerät und schreibt die Änderungen verständlich ins Protokoll
+    // Bei einem Kategoriewechsel bekommt das Gerät eine neue Nummer aus dem Bereich der neuen Kategorie.
     function update(vereinId, userId, old, kategorie, fields) {
-        q.update.run({ ...fields, id: old.id, kategorie_id: kategorie.id });
+        const moved = old.kategorie_id !== kategorie.id;
+        const deviceId = moved ? nextDeviceId(vereinId, kategorie) : old.device_id;
+        q.update.run({ ...fields, id: old.id, kategorie_id: kategorie.id, device_id: deviceId });
         const changes = [];
-        if (old.kategorie_id !== kategorie.id) changes.push(`Kategorie: ${old.kategorie} → ${kategorie.name}`);
+        if (moved) changes.push(`Kategorie: ${old.kategorie} → ${kategorie.name}`, `Inventarnummer: ${old.device_id} → ${deviceId}`);
         for (const f of FIELDS) {
             if ((old[f.key] ?? null) !== (fields[f.key] ?? null)) changes.push(`${f.label}: ${display(f.key, old[f.key])} → ${display(f.key, fields[f.key])}`);
         }

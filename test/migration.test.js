@@ -27,7 +27,7 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     old.close();
 
     const db = openDatabase(file);
-    assert.equal(db.pragma('user_version', { simple: true }), 3);
+    assert.equal(db.pragma('user_version', { simple: true }), 4);
     assert.equal(db.prepare(`SELECT can_manage_items FROM vereins_rollen WHERE id = 3`).get().can_manage_items, 1);
     const user = db.prepare(`SELECT password_hash, token_version FROM nutzer WHERE id = 5`).get();
     assert.ok(bcrypt.compareSync('altpasswort', user.password_hash));
@@ -36,8 +36,8 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     assert.equal(db.prepare(`SELECT COUNT(*) c FROM kategorien WHERE verein_id = 7`).get().c, 5);
     const items = db.prepare(`SELECT e.device_id, e.tuev, e.condition, k.name AS kat FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id ORDER BY e.id`).all();
     assert.deepEqual(items, [
-        { device_id: '101', tuev: '2025-05-01', condition: 'Gut', kat: 'Flaschen' },
-        { device_id: '501', tuev: null, condition: 'Gut', kat: 'Sonstiges' },
+        { device_id: '1001', tuev: '2025-05-01', condition: 'Gut', kat: 'Flaschen' },
+        { device_id: '5001', tuev: null, condition: 'Gut', kat: 'Sonstiges' },
     ]);
     const loan = db.prepare(`SELECT * FROM ausleihen WHERE equipment_id = 1 AND zurueckgegeben_am IS NULL`).get();
     assert.equal(loan.borrower, 'Carl');

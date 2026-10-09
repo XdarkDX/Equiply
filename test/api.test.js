@@ -90,7 +90,7 @@ test('Geräte anlegen mit allen Feldern und fortlaufenden Nummern', async () => 
     const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', notes: 'Rot lackiert' });
     const b = await admin.post('/api/equipment', { name: '10L Alu', kategorie_id: ids.flaschen });
     const c = await admin.post('/api/equipment', { name: 'Taschenlampe', kategorie_id: ids.lampen });
-    assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['101', '102', '601']);
+    assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['1001', '1002', '6001']);
     ids.flasche = a.body.id;
     ids.lampe = c.body.id;
 
@@ -174,6 +174,26 @@ test('QR-Code fürs Etikett', async () => {
     assert.equal(r.status, 200);
     assert.match(r.headers.get('content-type'), /image\/svg\+xml/);
     assert.match(r.body.toString(), /<svg/);
+    const QR = require('qrcode');
+    const expected = await QR.toString(`${srv.base.replace('http://', 'http://')}/#nr/6001`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+    assert.equal(r.body.toString(), expected, 'QR enthält die Inventarnummer, nicht die interne ID');
+});
+
+test('Inventarnummern: kleinste freie Nummer wird wiederverwendet, Kategoriewechsel vergibt neue Nummer', async () => {
+    const neu = async (name, kat = ids.flaschen) => (await admin.post('/api/equipment', { name, kategorie_id: kat })).body;
+    const x = await neu('Flasche X');
+    assert.equal(x.deviceId, '1003');
+    const y = await neu('Flasche Y');
+    assert.equal(y.deviceId, '1004');
+    await admin.del(`/api/equipment/${x.id}`);
+    assert.equal((await neu('Flasche Z')).deviceId, '1003', 'Lücke wird wiederverwendet');
+
+    const item = (await admin.get(`/api/equipment/${y.id}`)).body;
+    assert.equal((await admin.put(`/api/equipment/${y.id}`, { ...item, kategorie_id: ids.lampen })).status, 200);
+    const moved = (await admin.get(`/api/equipment/${y.id}`)).body;
+    assert.equal(moved.deviceId, '6002');
+    assert.match(moved.aktivitaeten[0].details, /Inventarnummer: 1004 → 6002/);
+    assert.equal((await neu('Flasche W')).deviceId, '1004', 'alte Nummer ist wieder frei');
 });
 
 test('Admin-Regeln: Ernennen, letzter Admin, neues Passwort meldet ab', async () => {
@@ -223,15 +243,35 @@ test('Login-Bremse nach 10 Fehlversuchen', async () => {
 });
 
 test('Die letzte Kategorie kann nicht gelöscht werden', async () => {
-    const kats = (await admin.get('/api/kategorien')).body.filter(k => k.anzahl === 0);
-    const all = (await admin.get('/api/kategorien')).body;
-    // alle leeren löschen, bis nur noch belegte übrig sind
-    for (const k of kats) await admin.del(`/api/kategorien/${k.id}`);
-    const rest = (await admin.get('/api/kategorien')).body;
-    assert.deepEqual(rest.map(k => k.name), ['Flaschen'], `vorher: ${all.map(k => k.name)}`);
-    // Flaschen leeren, dann ist sie die letzte -> darf nicht gelöscht werden
     for (const i of (await admin.get('/api/equipment')).body) await admin.del(`/api/equipment/${i.id}`);
-    const r = await admin.del(`/api/kategorien/${rest[0].id}`);
+    const kats = (await admin.get('/api/kategorien')).body;
+    for (const k of kats.slice(1)) assert.equal((await admin.del(`/api/kategorien/${k.id}`)).status, 200);
+    const r = await admin.del(`/api/kategorien/${kats[0].id}`);
     assert.equal(r.status, 409);
     assert.match(r.body.error, /Mindestens eine Kategorie/);
+});
+
+test('Vereinslogo und -farbe', async () => {
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', farbe: 'rot' })).status, 400);
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', farbe: '#E11D48' })).status, 200);
+    assert.equal((await admin.post('/api/verein/logo', Buffer.from('<svg/>'))).status, 400);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    assert.equal((await admin.post('/api/verein/logo', png)).status, 201);
+    const me = (await admin.get('/api/me')).body;
+    assert.equal(me.verein.farbe, '#e11d48');
+    assert.match(me.verein.logo, /^\/api\/verein\/logo\?v=logo-/);
+    const logo = await admin.get(me.verein.logo);
+    assert.equal(logo.headers.get('content-type'), 'image/png');
+    assert.deepEqual(logo.body, png);
+
+    // Login-Seite (nicht angemeldet) bekommt Name, Farbe und Logo
+    const anon = client(srv.base);
+    const b = (await anon.get('/api/branding')).body;
+    assert.equal(b.name, 'TC Nord e.V.');
+    assert.equal(b.farbe, '#e11d48');
+    assert.deepEqual((await anon.get(b.logo)).body, png);
+
+    assert.equal((await admin.del('/api/verein/logo')).status, 200);
+    assert.equal((await admin.get('/api/me')).body.verein.logo, null);
+    assert.equal((await anon.get('/api/branding/logo')).status, 404);
 });

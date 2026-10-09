@@ -3,7 +3,8 @@ module.exports = {
     content: ['./public/**/*.{html,js}'],
     theme: {
         extend: {
-            colors: { ozean: { leicht: '#e0f2fe', normal: '#0284c7', tief: '#0369a1' } },
+            // Vereinsfarbe: wird zur Laufzeit über CSS-Variablen gesetzt (siehe applyTheme in app.js)
+            colors: { ozean: { leicht: 'rgb(var(--ozean-leicht) / <alpha-value>)', normal: 'rgb(var(--ozean-normal) / <alpha-value>)', tief: 'rgb(var(--ozean-tief) / <alpha-value>)' } },
         },
     },
 };

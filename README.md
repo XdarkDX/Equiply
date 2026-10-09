@@ -13,8 +13,9 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 - **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
 - **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
 - **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
-- **QR-Etiketten** zum Ausdrucken (A4-Bögen 3 × 7) – Scannen mit dem Handy öffnet direkt das Gerät
-- **Eigene Kategorien** mit eigenem Nummernkreis
+- **QR-Etiketten** zum Ausdrucken (A4-Bögen 3 × 7) – Scannen mit dem Handy öffnet direkt das Gerät. Der Code enthält die Inventarnummer, Etiketten bleiben also gültig, wenn die Nummer neu vergeben wird
+- **Eigene Kategorien** mit eigenem Nummernkreis (z. B. 1001–1999, bis zu 999 Geräte pro Kategorie; Nummern gelöschter Geräte werden wiederverwendet)
+- **Vereinslogo und -farbe:** Logo hochladen, die Oberfläche übernimmt automatisch die Farbe
 - **Mitglieder & Rollen** mit feinen Rechten (Ausleihe, Inventar, Team)
 - **Aktivitätsprotokoll:** wer hat wann was geändert
 - Läuft auf PC, Tablet und Handy; lässt sich auf dem Handy als App auf den Startbildschirm legen

@@ -38,7 +38,13 @@ function createApp(db, config) {
     const sessions = createSessions(db, config);
     const limiter = createLoginLimiter();
     const inventory = createInventory(db);
-    const ctx = { db, config, sessions, limiter, inventory, log: inventory.log };
+    // Logos werden nach dem Typ gespeichert, der beim Hochladen erkannt wurde
+    const LOGO_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+    const sendLogo = (res, datei) => {
+        res.set({ 'Content-Type': LOGO_TYPES[path.extname(datei).slice(1)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800, immutable' });
+        res.sendFile(path.join(config.uploadDir, datei), (err) => { if (err && !res.headersSent) res.status(404).json({ error: 'Logo fehlt.' }); });
+    };
+    const ctx = { db, config, sessions, limiter, inventory, log: inventory.log, sendLogo };
 
     app.use(securityHeaders);
     app.use('/api', sameOrigin);
