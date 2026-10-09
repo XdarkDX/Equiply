@@ -27,7 +27,7 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     old.close();
 
     const db = openDatabase(file);
-    assert.equal(db.pragma('user_version', { simple: true }), 5);
+    assert.equal(db.pragma('user_version', { simple: true }), 6);
     const codes = db.prepare(`SELECT equipment_id, code FROM qr_codes ORDER BY equipment_id`).all();
     assert.deepEqual(codes.map(c => c.equipment_id), [1, 2], 'jedes Gerät hat einen festen QR-Code');
     assert.ok(codes.every(c => /^[0-9A-Z]{6}$/.test(c.code)));

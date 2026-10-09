@@ -11,12 +11,17 @@ module.exports = function authRoutes(app, { db, config, sessions, limiter, log, 
 
     // Logo und Farbe für die Login-Seite – nur wenn auf dem Server genau ein Verein eingerichtet ist
     const singleVerein = () => {
-        const rows = db.prepare(`SELECT name, farbe, logo FROM vereine LIMIT 2`).all();
+        const rows = db.prepare(`SELECT name, farbe, logo, impressum FROM vereine LIMIT 2`).all();
         return rows.length === 1 ? rows[0] : null;
     };
     app.get('/api/branding', (req, res) => {
         const v = singleVerein();
         res.json(v ? { name: v.name, farbe: v.farbe, logo: v.logo ? `/api/branding/logo?v=${v.logo}` : null } : {});
+    });
+    // Für die öffentlichen Seiten Impressum und Datenschutz (ohne Anmeldung)
+    app.get('/api/rechtliches', (req, res) => {
+        const v = singleVerein();
+        res.json({ verein: v ? v.name : null, impressum: v ? v.impressum || '' : '' });
     });
     app.get('/api/branding/logo', (req, res) => {
         const v = singleVerein();
@@ -77,7 +82,7 @@ module.exports = function authRoutes(app, { db, config, sessions, limiter, log, 
         const u = req.user;
         startSession(req, res, u); // Sitzung verlängern, solange die App benutzt wird
         res.json({ id: u.id, username: u.username, email: u.email, role: u.role, permissions: u.permissions,
-            verein: { id: u.verein_id, name: u.verein_name, farbe: u.verein_farbe, logo: u.verein_logo ? `/api/verein/logo?v=${u.verein_logo}` : null } });
+            verein: { id: u.verein_id, name: u.verein_name, farbe: u.verein_farbe, logo: u.verein_logo ? `/api/verein/logo?v=${u.verein_logo}` : null, impressum: u.verein_impressum || '' } });
     });
 
     app.put('/api/me/password', authenticate, async (req, res) => {

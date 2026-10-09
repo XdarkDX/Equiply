@@ -307,6 +307,21 @@ test('Löschen eines Geräts entfernt Bilder, Protokoll bleibt', async () => {
     assert.deepEqual(require('fs').readdirSync(srv.config.uploadDir), []);
 });
 
+test('Impressum und Datenschutz: öffentlich erreichbar, Impressum vom Admin pflegbar', async () => {
+    const anon = client(srv.base);
+    assert.equal((await anon.get('/api/rechtliches')).body.impressum, '', 'anfangs leer');
+    for (const page of ['/impressum.html', '/datenschutz.html']) assert.equal((await fetch(srv.base + page)).status, 200);
+    await admin.post('/api/users', { username: 'nurlesen', email: 'nurlesen@example.de', password: 'nurlesen123' });
+    const leser = client(srv.base);
+    await leser.post('/api/login', { username: 'nurlesen', password: 'nurlesen123' });
+    assert.equal((await leser.put('/api/verein', { name: 'X', impressum: 'Hack' })).status, 403, 'nur Admins');
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', impressum: 'TC Nord e.V.\nMusterstraße 1' })).status, 200);
+    assert.equal((await anon.get('/api/rechtliches')).body.impressum, 'TC Nord e.V.\nMusterstraße 1');
+    assert.equal((await admin.get('/api/me')).body.verein.impressum, 'TC Nord e.V.\nMusterstraße 1');
+    assert.equal((await admin.put('/api/verein', { name: 'TC Nord e.V.', impressum: 'x'.repeat(5001) })).status, 400);
+    await admin.put('/api/verein', { name: 'TC Nord e.V.', impressum: '' });
+});
+
 test('Login-Bremse nach 10 Fehlversuchen', async () => {
     const c = client(srv.base);
     for (let i = 0; i < 10; i++) await c.post('/api/login', { username: 'chef', password: 'falsch' + i });
@@ -388,3 +403,4 @@ test('Mehrere QR-Codes als ZIP mit PNG-Bildern', async () => {
     assert.deepEqual(Object.keys(z2.files).sort(), frei.map(c => `QR-Code ${c}.png`).sort());
     assert.equal((await admin.get('/api/qr/bilder.zip?ids=')).status, 400);
 });
+

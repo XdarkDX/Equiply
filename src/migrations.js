@@ -288,4 +288,11 @@ module.exports = [
             }
         },
     },
+    {
+        version: 6,
+        name: 'Impressum pro Verein',
+        up(db) {
+            db.exec(`ALTER TABLE vereine ADD COLUMN impressum TEXT`);
+        },
+    },
 ];

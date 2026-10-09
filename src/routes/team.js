@@ -12,12 +12,15 @@ module.exports = function teamRoutes(app, { db, config, sessions, log, sendLogo 
 
     // --- Verein ---
     app.put('/api/verein', authenticate, requireAdmin, (req, res) => {
-        const old = db.prepare(`SELECT name, farbe FROM vereine WHERE id = ?`).get(req.user.verein_id);
+        const old = db.prepare(`SELECT name, farbe, impressum FROM vereine WHERE id = ?`).get(req.user.verein_id);
         const name = requireText(req.body.name, 'Vereinsname', 100);
         // Nicht mitgeschickte Felder bleiben unverändert
         let farbe = req.body.farbe === undefined ? old.farbe : (req.body.farbe ? String(req.body.farbe).toLowerCase() : null);
         if (farbe && !/^#[0-9a-f]{6}$/.test(farbe)) throw new HttpError(400, 'Farbe ist ungültig.');
-        db.prepare(`UPDATE vereine SET name = ?, farbe = ? WHERE id = ?`).run(name, farbe, req.user.verein_id);
+        let impressum = req.body.impressum === undefined ? old.impressum : String(req.body.impressum || '').trim();
+        if (impressum && impressum.length > 5000) throw new HttpError(400, 'Das Impressum ist zu lang (max. 5000 Zeichen).');
+        db.prepare(`UPDATE vereine SET name = ?, farbe = ?, impressum = ? WHERE id = ?`).run(name, farbe, impressum || null, req.user.verein_id);
+        if ((old.impressum || '') !== (impressum || '')) log(req.user.verein_id, req.user.id, null, 'verein', 'Impressum geändert');
         if (old.name !== name) log(req.user.verein_id, req.user.id, null, 'verein', `Verein umbenannt in „${name}“`);
         if (old.farbe !== farbe) log(req.user.verein_id, req.user.id, null, 'verein', `Vereinsfarbe ${farbe ? `auf ${farbe} gesetzt` : 'zurückgesetzt'}`);
         res.json({ message: 'Gespeichert.' });

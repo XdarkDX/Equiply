@@ -848,6 +848,11 @@ async function renderSettings() {
                     </div>
                     <p class="text-xs text-slate-500 mt-2">Wird für Knöpfe, Markierungen und die Login-Seite verwendet. Sehr helle Farben werden automatisch etwas abgedunkelt.</p>
                 </div>
+                <div>
+                    <label class="label">Impressum</label>
+                    <textarea name="impressum" rows="6" maxlength="5000" class="input" placeholder="z. B. Vereinsname, Anschrift, vertretungsberechtigter Vorstand, Kontakt, Registergericht und Registernummer">${esc(v.impressum || '')}</textarea>
+                    <p class="text-xs text-slate-500 mt-2">Wird öffentlich auf der Seite <a href="impressum.html" target="_blank" class="text-ozean-normal hover:underline">Impressum</a> angezeigt. Die <a href="datenschutz.html" target="_blank" class="text-ozean-normal hover:underline">Datenschutzerklärung</a> verweist für die Kontaktdaten darauf.</p>
+                </div>
                 <button class="btn-primary">Speichern</button></form>
                 <div class="mt-8 text-sm text-slate-500 space-y-2 max-w-xl">
                     <p><b class="text-slate-700">Datensicherung:</b> Über „Export“ kannst du jederzeit das komplette Inventar als Excel-Datei herunterladen. Zusätzlich sichert der Server täglich automatisch die Datenbank.</p>
@@ -1480,7 +1485,7 @@ const forms = {
     },
     async verein(form) {
         const v = formValues(form);
-        await api('/verein', { method: 'PUT', body: { name: v.name, farbe: v.farbe === DEFAULT_COLOR ? null : v.farbe } });
+        await api('/verein', { method: 'PUT', body: { name: v.name, farbe: v.farbe === DEFAULT_COLOR ? null : v.farbe, impressum: v.impressum } });
         state.me = await api('/me');
         applyBranding(state.me.verein);
         toast('Gespeichert.');

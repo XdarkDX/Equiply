@@ -97,6 +97,12 @@ equiply-passwort anna NeuesPasswort123   # Passwort zurücksetzen (z. B. wenn de
 | `SESSION_DAYS` | Tage, die man ohne Nutzung angemeldet bleibt | `14` |
 | `ALLOW_REGISTRATION` | `true` = weitere Vereine dürfen sich auf diesem Server registrieren (getrennte Daten) | `false` |
 
+## Impressum & Datenschutz
+
+Unter `/impressum.html` und `/datenschutz.html` gibt es fertige Seiten, verlinkt auf der Login-Seite und unten in der App.
+Den Impressum-Text trägt der Admin unter *Einstellungen → Verein → Impressum* ein. Die Datenschutzerklärung beschreibt,
+was Equiply verarbeitet, und verweist für die Kontaktdaten auf das Impressum.
+
 ## Datenschutz & Sicherheit
 
 - Alles läuft auf dem eigenen Server. Es werden **keine externen Dienste, CDNs oder Schriftarten** nachgeladen und keine Daten an Dritte übertragen.
