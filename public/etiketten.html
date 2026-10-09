@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Equiply – Etiketten drucken</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="app.css">
+    <script src="etiketten.js" defer></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased">
+    <div class="no-print max-w-3xl mx-auto p-4 md:p-6">
+        <div class="card p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+                <h1 class="font-extrabold text-xl">QR-Etiketten</h1>
+                <p id="info" class="text-sm text-slate-500">Lade …</p>
+                <p class="text-xs text-slate-400 mt-1">Passend für A4-Etikettenbögen 3 × 7 (63,5 × 38,1 mm, z. B. Avery L7160 / Zweckform 3652). Beim Drucken „Tatsächliche Größe“ bzw. 100 % wählen.</p>
+            </div>
+            <button id="print" class="btn-primary shrink-0">Drucken</button>
+        </div>
+    </div>
+    <div id="sheet" class="label-sheet pb-8"></div>
+</body>
+</html>

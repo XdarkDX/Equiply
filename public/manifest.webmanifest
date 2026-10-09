@@ -1,0 +1,11 @@
+{
+  "name": "Equiply",
+  "short_name": "Equiply",
+  "description": "Equipment-Verwaltung für Vereine",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0369a1",
+  "lang": "de",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
