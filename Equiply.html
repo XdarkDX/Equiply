@@ -75,7 +75,7 @@
                 <div><label class="label">Vereinsname</label><input type="text" id="reg-verein" class="input-field"></div>
                 <div><label class="label">E-Mail Adresse</label><input type="email" id="reg-email" class="input-field"></div>
                 <div><label class="label">Benutzername</label><input type="text" id="reg-user" class="input-field"></div>
-                <div><label class="label">Passwort</label><input type="password" id="reg-pass" class="input-field"></div>
+                <div><label class="label">Passwort</label><input type="password" id="reg-pass" placeholder="Mindestens 8 Zeichen" class="input-field"></div>
                 <button onclick="register()" class="w-full bg-slate-800 hover:bg-slate-900 text-white py-3.5 rounded-xl font-bold shadow-lg hover:-translate-y-0.5 transition-all mt-4">Verein registrieren</button>
             </div>
             
@@ -163,7 +163,7 @@
                 <div class="flex flex-col md:flex-row gap-3 mb-4">
                     <input type="text" id="new-user-name" placeholder="Name" class="input-field flex-1">
                     <input type="email" id="new-user-email" placeholder="E-Mail" class="input-field flex-1">
-                    <input type="password" id="new-user-pass" placeholder="Passwort" class="input-field flex-1">
+                    <input type="password" id="new-user-pass" placeholder="Passwort (min. 8 Zeichen)" class="input-field flex-1">
                     <select id="new-user-role" class="input-field flex-1 font-bold"></select>
                 </div>
                 <button onclick="createSubUser()" class="w-full bg-purple-600 hover:bg-purple-700 text-white px-5 py-3 rounded-xl font-bold shadow-lg shadow-purple-500/20 transition-all">Mitglied anlegen</button>
@@ -259,6 +259,14 @@
         </div>
     </div>
 
+    <div id="history-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-2xl w-full max-w-lg p-5 md:p-8 shadow-2xl max-h-[85vh] flex flex-col">
+            <h2 id="history-title" class="font-extrabold text-xl mb-4">Ausleih-Verlauf</h2>
+            <div id="history-list" class="overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl mb-6"></div>
+            <button onclick="closeModal('history-modal')" class="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold">Schließen</button>
+        </div>
+    </div>
+
     <div id="renew-tuev-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-50">
         <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl">
             <h2 class="font-extrabold text-xl mb-2 text-red-600">TÜV erneuern</h2>
@@ -274,7 +282,7 @@
     <div id="change-pw-modal" class="hidden fixed inset-0 modal-glass flex justify-center items-center p-4 z-[70]">
         <div class="bg-white rounded-2xl w-full max-w-sm p-5 md:p-8 shadow-2xl"><h3 class="font-extrabold text-xl mb-6">Passwort ändern</h3>
             <div id="change-pw-error" class="hidden text-sm bg-red-50 text-red-600 p-3 rounded-xl mb-4 font-medium"></div><div id="change-pw-success" class="hidden text-sm bg-green-50 text-green-700 p-3 rounded-xl mb-4 font-medium"></div>
-            <input type="password" id="self-old-pw" placeholder="Altes PW" class="input-field mb-4"><input type="password" id="self-new-pw" placeholder="Neues PW" class="input-field mb-6">
+            <input type="password" id="self-old-pw" placeholder="Altes PW" class="input-field mb-4"><input type="password" id="self-new-pw" placeholder="Neues PW (min. 8 Zeichen)" class="input-field mb-6">
             <div class="flex gap-3"><button onclick="closeModal('change-pw-modal')" class="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold">Abbrechen</button><button onclick="saveNewOwnPassword()" class="flex-1 bg-ozean-normal text-white py-3 rounded-xl font-bold">Speichern</button></div>
         </div>
     </div>
@@ -291,8 +299,13 @@
         let currentFilter = 'Alle';
         let vereinUsers = []; 
         let vereinRollen = []; 
+        let superadminVereine = [];
         let userPermissions = { can_manage_users: false, can_manage_items: false, can_borrow_return: false };
         let currentUserRole = 'user';
+
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
 
         // -----------------------------------------------------
         // NEUE CUSTOM POP-UP LOGIK
@@ -454,15 +467,17 @@
             const content = document.getElementById('superadmin-content');
             try {
                 const data = await apiCall('/system-overview');
+                superadminVereine = data.vereine;
                 let html = '<div class="space-y-6">';
                 data.vereine.forEach(v => {
-                    html += `<div class="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-lg shadow-slate-200/50 relative overflow-hidden"><div class="absolute top-0 left-0 w-full h-1.5 bg-slate-800"></div><div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-100 pb-4 mb-5 gap-4"><div><h4 class="text-xl font-extrabold text-slate-800 tracking-tight">${v.name}</h4><span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono mt-1 inline-block">ID: ${v.id}</span></div><button onclick="sysDeleteVerein(${v.id}, '${v.name}')" class="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-all border border-red-200 hover:border-red-600 shadow-sm flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> Kompletten Verein löschen</button></div></div>`;
+                    html += `<div class="bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-lg shadow-slate-200/50 relative overflow-hidden"><div class="absolute top-0 left-0 w-full h-1.5 bg-slate-800"></div><div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-100 pb-4 mb-5 gap-4"><div><h4 class="text-xl font-extrabold text-slate-800 tracking-tight">${esc(v.name)}</h4><span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono mt-1 inline-block">ID: ${v.id}</span> <span class="text-xs text-slate-500 ml-2">${v.nutzer_anzahl} Nutzer · ${v.equipment_anzahl} Geräte</span></div><button onclick="sysDeleteVerein(${v.id})" class="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold transition-all border border-red-200 hover:border-red-600 shadow-sm flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> Kompletten Verein löschen</button></div></div>`;
                 });
                 content.innerHTML = html + '</div>';
             } catch (e) { content.innerHTML = `Error: ${e.message}`; }
         }
         
-        async function sysDeleteVerein(id, name) {
+        async function sysDeleteVerein(id) {
+            const name = (superadminVereine.find(v => v.id === id) || {}).name;
             const confirmed = await customConfirm(`Möchtest du den Verein "${name}" wirklich komplett löschen?\nDas löscht alle Daten unwiderruflich!`);
             if(!confirmed) return;
             try { await apiCall(`/vereine/${id}`, 'DELETE'); loadSuperAdminData(); } catch(e) { await customAlert(e.message); }
@@ -518,13 +533,13 @@
                 const p2 = p.can_manage_items ? check : cross;
                 const p3 = p.can_borrow_return ? check : cross;
 
-                return `<div class="flex justify-between items-center p-3 hover:bg-slate-50 transition-all"><div class="font-bold text-sm text-slate-800 w-1/3 truncate">${r.name}</div><div class="flex gap-4 text-xs text-slate-500 w-1/2"><span class="flex items-center gap-1">${p1} Team</span><span class="flex items-center gap-1">${p2} Inv.</span><span class="flex items-center gap-1">${p3} Ausl.</span></div><div class="w-1/6 text-right"><button onclick="deleteRole(${r.id})" class="text-slate-400 hover:text-red-500 bg-white p-1.5 rounded-lg border border-slate-100">${svgTrash}</button></div></div>`;
+                return `<div class="flex justify-between items-center p-3 hover:bg-slate-50 transition-all"><div class="font-bold text-sm text-slate-800 w-1/3 truncate">${esc(r.name)}</div><div class="flex gap-4 text-xs text-slate-500 w-1/2"><span class="flex items-center gap-1">${p1} Team</span><span class="flex items-center gap-1">${p2} Inv.</span><span class="flex items-center gap-1">${p3} Ausl.</span></div><div class="w-1/6 text-right"><button onclick="deleteRole(${r.id})" class="text-slate-400 hover:text-red-500 bg-white p-1.5 rounded-lg border border-slate-100">${svgTrash}</button></div></div>`;
             }).join('');
         }
 
         function updateRoleSelects() {
             let options = '<option value="">Keine Rolle (Nur Ansicht)</option>';
-            vereinRollen.forEach(r => options += `<option value="${r.id}">${r.name}</option>`);
+            vereinRollen.forEach(r => options += `<option value="${r.id}">${esc(r.name)}</option>`);
             document.getElementById('new-user-role').innerHTML = options;
             let editOptions = '<option value="admin">Admin (Alle Rechte)</option>' + options;
             document.getElementById('edit-user-role').innerHTML = editOptions;
@@ -538,11 +553,11 @@
             list.innerHTML = vereinUsers.map(u => {
                 const isAd = (u.role === 'admin' || u.role === 'superadmin');
                 const badge = isAd ? '<span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Admin</span>' 
-                                   : (u.rollen_name ? `<span class="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold uppercase">${u.rollen_name}</span>` : '<span class="text-slate-400 text-xs italic">Ohne Rolle</span>');
+                                   : (u.rollen_name ? `<span class="bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold uppercase">${esc(u.rollen_name)}</span>` : '<span class="text-slate-400 text-xs italic">Ohne Rolle</span>');
                 
                 const actions = isAd ? `<button onclick="openEditUserModal(${u.id})" class="text-slate-400 hover:text-purple-600 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgEdit}</button>` 
                                      : `<button onclick="openEditUserModal(${u.id})" class="text-slate-400 hover:text-purple-600 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgEdit}</button><button onclick="deleteUser(${u.id})" class="text-slate-400 hover:text-red-500 bg-white p-1.5 md:p-2 rounded-lg shadow-sm border border-slate-100">${svgTrash}</button>`;
-                return `<div class="flex justify-between items-center p-3 md:p-4 hover:bg-slate-50/50 transition-all"><div class="w-5/12 font-bold text-sm md:text-base text-slate-800 truncate">${u.username}</div><div class="w-5/12 flex flex-col items-start gap-1"><div class="text-slate-400 text-[10px] md:text-xs truncate">${u.email}</div>${badge}</div><div class="w-2/12 flex justify-end gap-2">${actions}</div></div>`;
+                return `<div class="flex justify-between items-center p-3 md:p-4 hover:bg-slate-50/50 transition-all"><div class="w-5/12 font-bold text-sm md:text-base text-slate-800 truncate">${esc(u.username)}</div><div class="w-5/12 flex flex-col items-start gap-1"><div class="text-slate-400 text-[10px] md:text-xs truncate">${esc(u.email)}</div>${badge}</div><div class="w-2/12 flex justify-end gap-2">${actions}</div></div>`;
             }).join('');
         }
 
@@ -662,17 +677,17 @@
                     <div>
                         <div class="flex items-center gap-2 mb-2">
                             ${statusBadge}
-                            <span class="text-[10px] md:text-xs font-mono font-bold text-slate-400 uppercase tracking-widest">${item.deviceId}</span>
+                            <span class="text-[10px] md:text-xs font-mono font-bold text-slate-400 uppercase tracking-widest">${esc(item.deviceId)}</span>
                         </div>
-                        <div class="text-[10px] md:text-xs font-bold text-ozean-normal uppercase tracking-wider mb-1">${item.category}</div>
-                        <h3 class="font-extrabold text-lg md:text-xl text-slate-800 leading-tight mb-4 pr-12">${item.name}</h3>
+                        <div class="text-[10px] md:text-xs font-bold text-ozean-normal uppercase tracking-wider mb-1">${esc(item.category)}</div>
+                        <h3 class="font-extrabold text-lg md:text-xl text-slate-800 leading-tight mb-4 pr-12">${esc(item.name)}</h3>
                         <div class="bg-slate-50 border border-slate-100 rounded-xl p-3 md:p-4 text-xs md:text-sm mb-4 space-y-2">
-                            <div class="flex justify-between"><span class="text-slate-500">Zustand</span> <span class="font-bold ${isBroken?'text-red-600':''}">${item.condition}</span></div>
+                            <div class="flex justify-between"><span class="text-slate-500">Zustand</span> <span class="font-bold ${isBroken?'text-red-600':''}">${esc(item.condition)}</span></div>
                             <div class="flex items-center justify-between"><span class="text-slate-500">TÜV</span> <span class="font-bold flex items-center">${formatDateToGerman(item.tuev)} ${tuevBadge}</span></div>
                         </div>
-                        ${isBorrowed ? `<div class="bg-amber-50 border border-amber-100 rounded-xl p-3 md:p-4 text-xs md:text-sm text-amber-800 mb-4 flex flex-col gap-2"><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg> <span class="truncate">Von: <b class="ml-1">${item.borrower}</b></span></span><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> <span class="truncate">Bis: <b class="ml-1">${formatDateToGerman(item.returnDate)}</b></span></span></div>` : ''}
+                        ${isBorrowed ? `<div class="bg-amber-50 border border-amber-100 rounded-xl p-3 md:p-4 text-xs md:text-sm text-amber-800 mb-4 flex flex-col gap-2"><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg> <span class="truncate">Von: <b class="ml-1">${esc(item.borrower)}</b></span></span><span class="flex items-center gap-2"><svg class="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> <span class="truncate">Bis: <b class="ml-1">${formatDateToGerman(item.returnDate)}</b></span></span></div>` : ''}
                     </div>
-                    <div class="mt-2">${actionBtn}</div>
+                    <div class="mt-2">${actionBtn}<button onclick="openHistory(${item.id})" class="w-full mt-2 text-xs font-bold text-slate-400 hover:text-ozean-normal transition-all">Verlauf anzeigen</button></div>
                 </div>`;
             }).join('');
         }
@@ -720,7 +735,7 @@
             document.getElementById('item-device-id').value = item.deviceId;
             document.getElementById('item-category').value = item.category; 
             document.getElementById('item-condition').value = item.condition; 
-            document.getElementById('item-tuev').value = item.tuev;
+            document.getElementById('item-tuev').value = item.tuev || '';
             document.getElementById('item-modal-title').innerText = 'Inventar bearbeiten';
             openModal('item-modal');
         }
@@ -765,6 +780,23 @@
         async function markAsRepaired(id) {
             const item = inventory.find(i => i.id == id);
             try { await apiCall(`/equipment/${id}`, 'PUT', { name: item.name, category: item.category, tuev: item.tuev, condition: 'Gut' }); loadInventory(); } catch(e){ await customAlert(e.message); }
+        }
+
+        async function openHistory(id) {
+            const item = inventory.find(i => i.id === id);
+            document.getElementById('history-title').innerText = `Verlauf: ${item.name} (${item.deviceId})`;
+            const list = document.getElementById('history-list');
+            list.innerHTML = '<div class="p-4 text-sm text-slate-400">Lade…</div>';
+            openModal('history-modal');
+            try {
+                const rows = await apiCall(`/equipment/${id}/history`);
+                const fmt = ts => ts ? new Date(ts).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+                list.innerHTML = rows.length ? rows.map(r => `<div class="p-3 text-sm">
+                    <div class="flex justify-between gap-2"><b class="text-slate-800 truncate">${esc(r.borrower)}</b>${r.zurueckgegeben_am ? `<span class="text-xs text-slate-500">${esc(r.zustand_bei_rueckgabe || '')}</span>` : '<span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Offen</span>'}</div>
+                    <div class="text-xs text-slate-500 mt-1">Ausgeliehen: ${fmt(r.ausgeliehen_am)}${r.ausgegeben_von ? ` von ${esc(r.ausgegeben_von)}` : ''}</div>
+                    <div class="text-xs text-slate-500">${r.zurueckgegeben_am ? `Zurück: ${fmt(r.zurueckgegeben_am)}${r.zurueckgenommen_von ? ` von ${esc(r.zurueckgenommen_von)}` : ''}` : `Geplant bis: ${formatDateToGerman(r.rueckgabe_geplant)}`}</div>
+                </div>`).join('') : '<div class="p-4 text-sm text-slate-400">Noch keine Ausleihen.</div>';
+            } catch (e) { list.innerHTML = `<div class="p-4 text-sm text-red-500">${esc(e.message)}</div>`; }
         }
 
         checkAuth();
