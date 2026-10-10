@@ -1,6 +1,6 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
-const { HttpError, CONDITIONS, CONDITION_LABELS, isIsoDate, today, normalizeCode, isValidCode, formatCode } = require('../util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, isIsoDate, today, normalizeCode, isValidCode, kennung, placeholder } = require('../util');
 const { requirePermission } = require('../session');
 const { buildPreview, makeCategoryResolver, MAX_ROWS } = require('../importer');
 
@@ -48,7 +48,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
     const canManageItems = [authenticate, requirePermission('can_manage_items')];
 
     function existingMaps(vereinId) {
-        const rows = db.prepare(`SELECT id, device_id, seriennummer FROM equipment WHERE verein_id = ?`).all(vereinId);
+        const rows = db.prepare(`SELECT e.id, e.device_id, e.seriennummer, k.prefix FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.verein_id = ?`).all(vereinId);
 
         const serialCount = new Map();
         for (const r of rows) if (r.seriennummer) serialCount.set(r.seriennummer.toLowerCase(), (serialCount.get(r.seriennummer.toLowerCase()) || []).concat(r.id));
@@ -56,17 +56,19 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         const bySerial = new Map([...serialCount].filter(([, ids]) => ids.length === 1).map(([k, ids]) => [k, ids[0]]));
         // aktuelle und alte Codes (inkl. früherer Inventarnummern) der Geräte
         const byCode = new Map(db.prepare(`SELECT code, equipment_id FROM qr_codes WHERE verein_id = ? AND equipment_id IS NOT NULL`).all(vereinId).map(r => [r.code, r.equipment_id]));
+        // Geräte ohne QR-Code über ihren Platzhalter (z. B. FL-NEU17 aus einem früheren Export)
+        for (const r of rows) if (!r.device_id) byCode.set(normalizeCode(placeholder(r.prefix, r.id)), r.id);
         return { byCode, bySerial };
     }
 
     // --- Export ---
     app.get('/api/export/inventar.xlsx', authenticate, async (req, res) => {
         const items = db.prepare(`
-            SELECT e.device_id AS code, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
+            SELECT e.id, e.device_id AS code, k.prefix, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
                    e.condition, e.notes, CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status, a.borrower, a.rueckgabe_geplant AS returnDate
             FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id
             LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
-            WHERE e.verein_id = ? ORDER BY k.prefix, e.device_id`).all(req.user.verein_id);
+            WHERE e.verein_id = ? ORDER BY k.prefix, e.device_id IS NULL, e.device_id, e.id`).all(req.user.verein_id);
 
         const wb = new ExcelJS.Workbook();
         wb.creator = 'Equiply';
@@ -74,7 +76,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         const columns = [...COLUMNS, ...EXPORT_EXTRA];
         styleSheet(sheet, columns);
         for (const i of items) {
-            sheet.addRow({ ...i, code: formatCode(i.code), condition: CONDITION_LABELS[i.condition], tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
+            sheet.addRow({ ...i, code: kennung(i.code, i.prefix, i.id), condition: CONDITION_LABELS[i.condition], tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
         }
         sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
         await sendWorkbook(res, wb, `equiply-inventar-${today()}.xlsx`);
@@ -101,8 +103,9 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
             'So füllst du die Vorlage aus:',
             '',
             '• Pro Zeile ein Gerät. Nur „Bezeichnung“ ist Pflicht, alle anderen Spalten sind optional.',
-            '• Code leer lassen → Equiply vergibt automatisch einen Code (z. B. FL-7K3X, die ersten Buchstaben stehen für die Kategorie).',
-            '• Code, den es schon gibt → das vorhandene Gerät wird aktualisiert (nur ausgefüllte Felder).',
+            '• Code leer lassen → das Gerät bekommt einen Platzhalter (z. B. FL-NEU17), bis du ihm in Equiply einen QR-Code zuweist.',
+            '• Code eines freien Schilds (z. B. FL-7K3X, die ersten Buchstaben stehen für die Kategorie) → das Gerät bekommt diesen Code.',
+            '• Code oder Platzhalter, den es schon gibt → das vorhandene Gerät wird aktualisiert (nur ausgefüllte Felder).',
             `• Kategorie: ${kategorien.join(', ')}. Unbekannte Kategorien werden neu angelegt, leere landen in „Sonstiges“.`,
             '• Datumsangaben als Datum oder z. B. 31.12.2027. Beim TÜV reicht auch Monat/Jahr (z. B. 05/2027).',
             '• Zustand: Einwandfrei, Leichte Mängel oder Defekt.',
@@ -170,13 +173,13 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
                             const fields = inventory.readFields(merged);
                             const kat = kategorie || { id: old.kategorie_id, name: old.kategorie, prefix: old.prefix };
                             const r = inventory.update(vereinId, req.user.id, old, kat, fields);
-                            byCode.set(r.code, old.id);
+                            if (r.code) byCode.set(r.code, old.id);
                             if (r.changed) result.aktualisiert++;
                             else result.uebersprungen++;
                         } else {
                             const fields = inventory.readFields(d);
-                            const { id } = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, code && isValidCode(code) ? code : null);
-                            byCode.set(db.prepare(`SELECT device_id FROM equipment WHERE id = ?`).get(id).device_id, id);
+                            const neu = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, code && isValidCode(code) ? code : null);
+                            if (neu.code) byCode.set(neu.code, neu.id);
                             result.neu++;
                         }
                     })();

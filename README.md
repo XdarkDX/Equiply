@@ -13,10 +13,11 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 - **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
 - **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
 - **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
-- **Ein Code pro Gerät** (z. B. `FL-7K3X`): Er ist gleichzeitig die Kennung des Geräts und steht im QR-Code. Die ersten Buchstaben
-  zeigen die Kategorie (`FL` = Flaschen), der Rest ist zufällig. Jedes neue Gerät bekommt seinen Code automatisch.
-  Kommt ein Gerät in eine andere Kategorie, wird aus `FL-7K3X` → `AT-7K3X`; das alte Schild funktioniert trotzdem weiter.
-  Codes gelöschter Geräte werden frei und können für ein neues Gerät verwendet werden.
+- **QR-Codes mit Kategorie-Kürzel** (z. B. `FL-7K3X`): Der Code ist die Kennung des Geräts und steht im QR-Code. Die ersten
+  Buchstaben zeigen die Kategorie (`FL` = Flaschen), der Rest ist zufällig. Ein neues Gerät hat zunächst nur einen Platzhalter
+  (z. B. `FL-NEU17`) und bekommt seinen QR-Code erst, wenn man ihn zuweist: aus dem Vorrat, per Schild-Scan, neu erzeugt oder
+  für mehrere Geräte auf einmal. Kommt ein Gerät mit Code in eine andere Kategorie, wird aus `FL-7K3X` → `AT-7K3X`; das alte
+  Schild funktioniert trotzdem weiter. Codes gelöschter Geräte werden frei und können wieder verwendet werden.
 - **QR-Codes** zum Herunterladen als Bild (PNG mit dem Code darunter), Etiketten für A4-Bögen (3 × 7), alles an einem Ort
   (Knopf „QR-Codes“). **Freie Codes auf Vorrat** pro Kategorie, z. B. zum Lasern auf Stahl: Schild später scannen → Gerät damit anlegen
 - **Eingebauter QR-Scanner** (Kamera oder Foto), erkennt auch helle Codes auf dunklem Metall

@@ -90,25 +90,30 @@ test('Excel-Import: Vorschau erkennt Spalten, Kategorien, Fehler – erst Übern
     assert.deepEqual(imp.body.neueKategorien, ['Lampen']);
 
     const items = (await admin.get('/api/equipment')).body;
-    assert.deepEqual(items.map(i => i.code.slice(0, 2)).sort(), ['AT', 'FL', 'LA'], 'Code beginnt mit Kategorie-Kürzel');
+    assert.ok(items.every(i => i.code === null), 'importierte Geräte haben noch keinen QR-Code');
+    assert.deepEqual(items.map(i => i.kennung.replace(/NEU\d+$/, 'NEU')).sort(), ['AT-NEU', 'FL-NEU', 'LA-NEU'], 'Platzhalter mit Kategorie-Kürzel');
     assert.equal(items.find(i => i.name === 'Flasche 12L').seriennummer, 'A-1');
 });
 
-test('Re-Import: vorhandene Codes werden aktualisiert, leere Felder bleiben', async () => {
+test('Re-Import: vorhandene Codes und Platzhalter werden aktualisiert, leere Felder bleiben', async () => {
     const items0 = (await admin.get('/api/equipment')).body;
     const fl = items0.find(i => i.name === 'Flasche 12L');
+    fl.code = (await admin.put(`/api/equipment/${fl.id}/qr`, { neu: true })).body.code;
+    const regler = items0.find(i => i.category === 'Atemregler');
     const file = await xlsx([
         ['Code', 'Bezeichnung', 'Lagerort', 'Hersteller'],
         [`${fl.code.slice(0, 2)}-${fl.code.slice(2)}`.toLowerCase(), 'Flasche 12L Stahl', 'Keller', null],
+        [regler.kennung.toLowerCase(), null, 'Schrank 2', null],
         ['1001', 'Neue Flasche', null, null],
     ]);
     const p = (await admin.post('/api/import/vorschau', file)).body;
     assert.equal(p.spalten.code, 'Code');
-    assert.deepEqual(p.zeilen.map(z => z.aktion), ['aktualisieren', 'neu']);
-    assert.match(p.zeilen[1].hinweise.join(), /neuer Code/, 'alte Zahlen-Nummer ist kein gültiger Code');
+    assert.deepEqual(p.zeilen.map(z => z.aktion), ['aktualisieren', 'aktualisieren', 'neu']);
+    assert.match(p.zeilen[2].hinweise.join(), /Platzhalter/, 'alte Zahlen-Nummer ist kein gültiger Code');
     const imp = (await admin.post('/api/import', { zeilen: p.zeilen })).body;
-    assert.equal(imp.aktualisiert, 1);
+    assert.equal(imp.aktualisiert, 2);
     assert.equal(imp.neu, 1);
+    assert.equal((await admin.get(`/api/equipment/${regler.id}`)).body.lagerort, 'Schrank 2', 'über den Platzhalter gefunden');
 
     const items = (await admin.get('/api/equipment')).body;
     const f = items.find(i => i.id === fl.id);
@@ -119,7 +124,8 @@ test('Re-Import: vorhandene Codes werden aktualisiert, leere Felder bleiben', as
     assert.equal(f.code, fl.code, 'Code bleibt');
     const neu = items.find(i => i.name === 'Neue Flasche');
     assert.equal(neu.category, 'Sonstiges');
-    assert.match(neu.code, /^SO/);
+    assert.equal(neu.code, null);
+    assert.match(neu.kennung, /^SO-NEU\d+$/);
 
     const skip = (await admin.post('/api/import', { zeilen: p.zeilen.slice(0, 1), aktualisieren: false })).body;
     assert.equal(skip.uebersprungen, 1);
@@ -150,7 +156,10 @@ test('Export und Vorlage sind gültige Excel-Dateien und wieder importierbar', a
     await wb.xlsx.load(exp.body);
     const ws = wb.getWorksheet('Inventar');
     assert.equal(ws.getRow(1).getCell(1).value, 'Code');
-    assert.match(ws.getRow(2).getCell(1).value, /^[A-Z]{2}-[0-9A-Z]{4}$/, 'Code mit Bindestrich');
+    const codes = [];
+    ws.eachRow((row, i) => { if (i > 1) codes.push(row.getCell(1).value); });
+    assert.ok(codes.every(c => /^[A-Z]{2}-([0-9A-Z]{4}|NEU\d+)$/.test(c)), `Code mit Bindestrich oder Platzhalter: ${codes}`);
+    assert.ok(codes.some(c => /NEU/.test(c)) && codes.some(c => !/NEU/.test(c)));
     assert.equal(ws.actualRowCount, 1 + (await admin.get('/api/equipment')).body.length);
 
     // Export direkt wieder importieren -> alles wird als "aktualisieren" erkannt

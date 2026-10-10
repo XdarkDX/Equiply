@@ -106,6 +106,11 @@ function formatCode(code) {
     return code && NEW_CODE.test(code) ? `${code.slice(0, -RANDOM_LENGTH)}-${code.slice(-RANDOM_LENGTH)}` : code;
 }
 
+// Geräte ohne QR-Code haben einen Platzhalter mit dem Kürzel ihrer Kategorie, z. B. FL-NEU17.
+// Ein U kommt in echten Codes nie vor, Verwechslungen sind also ausgeschlossen.
+const placeholder = (prefix, id) => `${prefix}-NEU${id}`;
+const kennung = (code, prefix, id) => (code ? formatCode(code) : placeholder(prefix, id));
+
 // Kürzel aus dem Kategorienamen: zuerst die ersten zwei Buchstaben (Flaschen -> FL),
 // sonst eine andere eindeutige Kombination; bei mehr als 676 Kategorien drei Buchstaben.
 function derivePrefix(name, used) {
@@ -130,5 +135,5 @@ function derivePrefix(name, used) {
 module.exports = {
     CONDITIONS, CONDITION_LABELS, DEFAULT_CATEGORIES, MIN_PASSWORD_LENGTH, HttpError,
     requireText, optionalText, requireEmail, requirePassword, optionalDate, isIsoDate, requireOneOf, requireId,
-    today, formatDate, normalizeKey, detectImage, randomPart, generateCode, normalizeCode, isValidCode, isCategoryCode, formatCode, derivePrefix,
+    today, formatDate, normalizeKey, detectImage, randomPart, generateCode, normalizeCode, isValidCode, isCategoryCode, formatCode, placeholder, kennung, derivePrefix,
 };

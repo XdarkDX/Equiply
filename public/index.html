@@ -120,6 +120,7 @@
                     <option value="ueberfaellig">Überfällig</option>
                     <option value="tuev">TÜV fällig</option>
                     <option value="defekt">Defekt</option>
+                    <option value="ohneqr">Ohne QR-Code</option>
                 </select>
                 <div class="flex bg-white border border-slate-200 rounded-lg p-1 shrink-0">
                     <button data-action="view" data-view="grid" class="view-btn icon-btn p-1.5" title="Kachelansicht"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg></button>
@@ -163,7 +164,8 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="sm:col-span-2"><label class="label">Bezeichnung *</label><input name="name" class="input" required maxlength="100" placeholder="z. B. 12 L Stahlflasche"></div>
             <div><label class="label">Kategorie</label><select name="kategorie_id" class="input" id="item-kategorie"></select></div>
-            <div id="item-code-field"><label class="label" for="item-code-show">Code</label><input id="item-code-show" class="input font-mono" readonly tabindex="-1"></div>
+            <div id="item-code-field"><label class="label" for="item-code-show">Code</label><input id="item-code-show" class="input font-mono" readonly tabindex="-1">
+                <p id="item-code-hint" class="text-xs text-amber-600 mt-1" hidden>Platzhalter – noch kein QR-Code zugewiesen</p></div>
             <div><label class="label">Hersteller</label><input name="hersteller" class="input" maxlength="100"></div>
             <div><label class="label">Seriennummer</label><input name="seriennummer" class="input" maxlength="100"></div>
             <div><label class="label">Größe / Volumen</label><input name="groesse" class="input" maxlength="50" placeholder="z. B. XL, 12 L, 2 kg"></div>
@@ -249,7 +251,7 @@
                 </div>
                 <div class="bg-slate-50 rounded-xl p-4">
                     <div class="font-bold text-slate-800 mb-1">Lieber mit Vorlage?</div>
-                    <a href="/api/import/vorlage.xlsx" class="text-ozean-normal font-bold hover:underline">Excel-Vorlage herunterladen</a>, ausfüllen und hier hochladen. Geräte mit vorhandenem Code (z. B. FL-7K3X) werden aktualisiert statt doppelt angelegt.
+                    <a href="/api/import/vorlage.xlsx" class="text-ozean-normal font-bold hover:underline">Excel-Vorlage herunterladen</a>, ausfüllen und hier hochladen. Geräte mit vorhandenem Code (z. B. FL-7K3X) oder Platzhalter (z. B. FL-NEU17) werden aktualisiert statt doppelt angelegt.
                 </div>
             </div>
         </div>
@@ -387,11 +389,11 @@
     <div class="dialog max-w-sm text-center" id="qr-modal-content"></div>
 </div>
 
-<!-- Anderes Schild für ein Gerät verwenden -->
+<!-- QR-Code zuweisen bzw. anderes Schild verwenden -->
 <div id="qr-assign-modal" class="overlay" hidden>
     <div class="dialog max-w-md">
         <div class="flex justify-between items-start mb-1">
-            <h2 class="font-extrabold text-xl">Anderes Schild verwenden</h2>
+            <h2 id="qr-assign-title" class="font-extrabold text-xl">QR-Code zuweisen</h2>
             <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
         </div>
         <p id="qr-assign-item" class="text-sm text-slate-500 mb-5"></p>
@@ -409,6 +411,10 @@
                     <button class="btn-dark">OK</button>
                 </div>
             </form>
+            <div class="border-t border-slate-100 pt-5">
+                <div class="font-bold text-sm mb-2">Oder neuen Code erzeugen (Schild danach drucken oder lasern)</div>
+                <button id="qr-assign-new" data-action="qr-assign-new" class="btn-outline w-full py-3">Neuen Code erzeugen</button>
+            </div>
         </div>
     </div>
 </div>

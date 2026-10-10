@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcrypt');
-const { HttpError, requireText, requireEmail, requirePassword, requireId, detectImage } = require('../util');
+const { HttpError, requireText, requireEmail, requirePassword, requireId, detectImage, kennung } = require('../util');
 const { requirePermission, requireAdmin } = require('../session');
 
 module.exports = function teamRoutes(app, { db, config, sessions, log, sendLogo }) {
@@ -175,10 +175,12 @@ module.exports = function teamRoutes(app, { db, config, sessions, log, sendLogo 
     app.get('/api/aktivitaeten', ...canManageUsers, (req, res) => {
         const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
         res.json(db.prepare(`
-            SELECT a.id, a.aktion, a.details, a.created_at, a.equipment_id, n.username, e.name AS equipment_name, e.device_id
+            SELECT a.id, a.aktion, a.details, a.created_at, a.equipment_id, n.username, e.name AS equipment_name, e.device_id, k.prefix
             FROM aktivitaeten a
             LEFT JOIN nutzer n ON n.id = a.nutzer_id
             LEFT JOIN equipment e ON e.id = a.equipment_id
-            WHERE a.verein_id = ? ORDER BY a.created_at DESC, a.id DESC LIMIT ?`).all(req.user.verein_id, limit));
+            LEFT JOIN kategorien k ON k.id = e.kategorie_id
+            WHERE a.verein_id = ? ORDER BY a.created_at DESC, a.id DESC LIMIT ?`).all(req.user.verein_id, limit)
+            .map(({ device_id, prefix, ...a }) => ({ ...a, kennung: a.equipment_name ? kennung(device_id, prefix, a.equipment_id) : null })));
     });
 };

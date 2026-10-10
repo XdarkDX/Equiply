@@ -27,7 +27,7 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     old.close();
 
     const db = openDatabase(file);
-    assert.equal(db.pragma('user_version', { simple: true }), 7);
+    assert.equal(db.pragma('user_version', { simple: true }), 8);
     // Kürzel aus den Kategorienamen
     assert.deepEqual(db.prepare(`SELECT name, prefix FROM kategorien WHERE verein_id = 7 ORDER BY name`).all().map(k => `${k.name}:${k.prefix}`),
         ['Atemregler:AT', 'Blei:BL', 'Flaschen:FL', 'Jackets:JA', 'Sonstiges:SO']);
@@ -53,5 +53,38 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     const again = openDatabase(file);
     assert.equal(again.prepare(`SELECT COUNT(*) c FROM equipment`).get().c, 2);
     again.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Update von 2.6: nur Geräte mit QR-Code bekommen einen Code, die anderen einen Platzhalter', () => {
+    const migrations = require('../src/migrations');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'equiply-mig26-'));
+    const file = path.join(dir, 'v26.db');
+    // Datenbank im Stand von Version 2.6 (Migration 6) aufbauen
+    const old = new Database(file);
+    old.pragma('foreign_keys = OFF');
+    for (const m of migrations.filter(m => m.version <= 6)) { m.up(old); old.pragma(`user_version = ${m.version}`); }
+    old.exec(`
+        INSERT INTO vereine (id, name) VALUES (1, 'TC');
+        INSERT INTO kategorien (id, verein_id, name, prefix) VALUES (1, 1, 'Flaschen', '1'), (2, 1, 'Atemregler', '2');
+        INSERT INTO equipment (id, verein_id, kategorie_id, device_id, name) VALUES (1, 1, 1, '1001', 'Mit Schild'), (2, 1, 2, '2001', 'Ohne Schild');
+        INSERT INTO qr_codes (code, verein_id, equipment_id) VALUES ('K7F3X9', 1, 1), ('FREI23', 1, NULL);
+    `);
+    old.close();
+
+    const db = openDatabase(file);
+    assert.equal(db.pragma('user_version', { simple: true }), 8);
+    const [mit, ohne] = db.prepare(`SELECT id, device_id FROM equipment ORDER BY id`).all();
+    assert.match(mit.device_id, /^FL[0-9A-Z]{4}$/, 'hatte einen QR-Code -> neuer Code mit Kürzel');
+    assert.equal(ohne.device_id, null, 'hatte keinen QR-Code -> Platzhalter');
+    const codes = db.prepare(`SELECT code, equipment_id FROM qr_codes ORDER BY code`).all();
+    assert.deepEqual(codes.map(c => `${c.code}:${c.equipment_id}`).sort(),
+        ['1001:1', '2001:2', 'K7F3X9:1', `${mit.device_id}:1`].sort(), 'alte Nummern und Schilder bleiben gültig, freie Codes ohne Kategorie entfallen');
+    assert.deepEqual(db.pragma('foreign_key_check'), []);
+    // Änderungszeit wird weiterhin automatisch gesetzt
+    db.prepare(`UPDATE equipment SET updated_at = '2000-01-01T00:00:00.000Z' WHERE id = 2`).run();
+    db.prepare(`UPDATE equipment SET name = 'Geändert' WHERE id = 2`).run();
+    assert.notEqual(db.prepare(`SELECT updated_at FROM equipment WHERE id = 2`).get().updated_at, '2000-01-01T00:00:00.000Z');
+    db.close();
     fs.rmSync(dir, { recursive: true, force: true });
 });

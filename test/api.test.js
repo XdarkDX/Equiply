@@ -88,25 +88,45 @@ test('Kategorien: nur Name eingeben, Kürzel wird automatisch und eindeutig verg
     assert.equal((await admin.del(`/api/kategorien/${fl.body.id}`)).status, 200);
 });
 
-test('Geräte: der Code ist die Kennung und beginnt mit dem Kategorie-Kürzel', async () => {
+test('Neue Geräte haben einen Platzhalter, bis ein QR-Code zugewiesen wird', async () => {
     const kats = (await admin.get('/api/kategorien')).body;
     ids.flaschen = kats.find(k => k.name === 'Flaschen').id;
     const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', notes: 'Rot lackiert' });
     const b = await admin.post('/api/equipment', { name: '10L Alu', kategorie_id: ids.flaschen });
     const c = await admin.post('/api/equipment', { name: 'Taschenlampe', kategorie_id: ids.lampen });
-    assert.match(a.body.code, /^FL[0-9A-HJKMNP-TV-Z]{4}$/);
-    assert.match(b.body.code, /^FL[0-9A-HJKMNP-TV-Z]{4}$/);
-    assert.match(c.body.code, /^LA[0-9A-HJKMNP-TV-Z]{4}$/);
-    assert.notEqual(a.body.code, b.body.code);
+    assert.equal(a.status, 201);
+    assert.deepEqual([a.body.code, b.body.code, c.body.code], [null, null, null], 'kein automatischer Code');
+    assert.equal(a.body.kennung, `FL-NEU${a.body.id}`);
+    assert.equal(c.body.kennung, `LA-NEU${c.body.id}`);
     ids.flasche = a.body.id;
     ids.lampe = c.body.id;
 
-    const item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
-    assert.equal(item.code, a.body.code);
+    let item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
+    assert.equal(item.code, null);
+    assert.equal(item.kennung, `FL-NEU${ids.flasche}`);
     assert.equal(item.hersteller, 'Faber');
     assert.equal(item.category, 'Flaschen');
     assert.equal(item.aktivitaeten[0].aktion, 'erstellt');
-    assert.match(item.aktivitaeten[0].details, new RegExp(`FL-${a.body.code.slice(2)}`));
+    assert.match(item.aktivitaeten[0].details, /\(FL-NEU\d+\) angelegt – noch ohne QR-Code/);
+    assert.equal((await admin.get(`/api/equipment/${ids.flasche}/qr.png`)).status, 404, 'ohne Code kein QR-Bild');
+    assert.equal((await admin.get(`/api/qr/bilder.zip?ids=${ids.flasche}`)).status, 400);
+
+    // Neuen Code erzeugen und zuweisen
+    const q = await admin.put(`/api/equipment/${ids.flasche}/qr`, { neu: true });
+    assert.equal(q.status, 200);
+    assert.match(q.body.code, /^FL[0-9A-HJKMNP-TV-Z]{4}$/);
+    item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
+    assert.equal(item.code, q.body.code);
+    assert.equal(item.kennung, `FL-${q.body.code.slice(2)}`);
+    assert.match(item.aktivitaeten[0].details, /^QR-Code FL-.{4} zugewiesen$/);
+    assert.equal((await helfer.put(`/api/equipment/${ids.lampe}/qr`, { neu: true })).status, 403, 'nur mit Inventar-Recht');
+
+    // Mehrere auf einmal: nur Geräte ohne Code bekommen einen
+    const z = await admin.post('/api/qr/zuweisen', { ids: [a.body.id, b.body.id] });
+    assert.equal(z.body.anzahl, 1);
+    assert.equal((await admin.get(`/api/equipment/${ids.flasche}`)).body.code, q.body.code, 'vorhandener Code bleibt');
+    assert.match((await admin.get(`/api/equipment/${b.body.id}`)).body.code, /^FL/);
+    assert.equal((await admin.get(`/api/equipment/${ids.lampe}`)).body.code, null, 'Lampe noch ohne Code');
 
     assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: 9999 })).status, 400);
     assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, tuev: '31.02.2030' })).status, 400);
@@ -179,7 +199,15 @@ test('Kommentare: jeder darf schreiben, nur eigene löschen', async () => {
 });
 
 test('Kategoriewechsel: neues Kürzel, Zufallsteil bleibt, altes Schild funktioniert weiter', async () => {
+    // ohne Code ändert sich nur der Platzhalter
+    const ohne = (await admin.post('/api/equipment', { name: 'Ohne Code', kategorie_id: ids.flaschen })).body;
+    const o = await admin.put(`/api/equipment/${ohne.id}`, { name: 'Ohne Code', kategorie_id: ids.lampen });
+    assert.equal(o.body.codeGeaendert, false);
+    assert.equal((await admin.get(`/api/equipment/${ohne.id}`)).body.kennung, `LA-NEU${ohne.id}`);
+    await admin.del(`/api/equipment/${ohne.id}`);
+
     const x = (await admin.post('/api/equipment', { name: 'Wechsel-Test', kategorie_id: ids.flaschen })).body;
+    x.code = (await admin.put(`/api/equipment/${x.id}/qr`, { neu: true })).body.code;
     const item = (await admin.get(`/api/equipment/${x.id}`)).body;
     const r = await admin.put(`/api/equipment/${x.id}`, { ...item, kategorie_id: ids.lampen });
     assert.equal(r.body.codeGeaendert, true);
@@ -193,10 +221,13 @@ test('Kategoriewechsel: neues Kürzel, Zufallsteil bleibt, altes Schild funktion
     // Umbenennen ohne Kategoriewechsel lässt den Code gleich
     const r2 = await admin.put(`/api/equipment/${x.id}`, { ...moved, name: 'Wechsel-Test 2' });
     assert.equal(r2.body.codeGeaendert, false);
-    // Löschen: alter Code verschwindet, aktueller Code wird frei
+    // zurück in die alte Kategorie: der alte Code gilt wieder
+    const back = await admin.put(`/api/equipment/${x.id}`, { ...moved, name: 'Wechsel-Test 2', kategorie_id: ids.flaschen });
+    assert.equal(back.body.code, x.code);
+    // Löschen: alte Codes verschwinden, aktueller Code wird frei
     await admin.del(`/api/equipment/${x.id}`);
-    assert.equal((await admin.get(`/api/qr/${x.code}`)).body.status, 'unbekannt');
-    assert.equal((await admin.get(`/api/qr/${r.body.code}`)).body.status, 'frei');
+    assert.equal((await admin.get(`/api/qr/${r.body.code}`)).body.status, 'unbekannt');
+    assert.equal((await admin.get(`/api/qr/${x.code}`)).body.status, 'frei');
 });
 
 test('Freie Codes: pro Kategorie, Gerät damit anlegen, Schild tauschen', async () => {
@@ -222,8 +253,16 @@ test('Freie Codes: pro Kategorie, Gerät damit anlegen, Schild tauschen', async 
     assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.code, vorrat[1]);
     assert.equal((await admin.get(`/api/qr/${vorrat[0]}`)).body.status, 'frei');
     assert.equal((await admin.put(`/api/equipment/${a.id}/qr`, { code: 'LA' + vorrat[2].slice(2) })).status, 409, 'falsche Kategorie');
-    assert.equal((await admin.del(`/api/qr/frei/${vorrat[2]}`)).status, 200);
     assert.equal((await admin.del(`/api/qr/frei/${vorrat[1]}`)).status, 404, 'zugeordnete Codes nicht löschbar');
+    // Gerät ohne Code bekommt einen Vorrats-Code
+    const ohne = (await admin.post('/api/equipment', { name: 'Noch ohne', kategorie_id: ids.flaschen })).body;
+    const g = await admin.put(`/api/equipment/${ohne.id}/qr`, { code: vorrat[2] });
+    assert.equal(g.status, 200);
+    assert.match(g.body.message, /zugewiesen/);
+    assert.equal((await admin.get(`/api/equipment/${ohne.id}`)).body.code, vorrat[2]);
+    assert.equal((await admin.get(`/api/qr/${vorrat[2]}`)).body.equipment_id, ohne.id);
+    await admin.del(`/api/equipment/${ohne.id}`);
+    assert.equal((await admin.del(`/api/qr/frei/${vorrat[2]}`)).status, 200, 'nach dem Löschen wieder frei');
     await admin.del(`/api/equipment/${a.id}`);
 });
 
@@ -337,6 +376,7 @@ test('QR-Code als PNG-Bild herunterladen, mit Code darunter', async () => {
     const kat0 = (await admin.get('/api/kategorien')).body[0];
     const kat = kat0.id;
     const item = (await admin.post('/api/equipment', { name: 'Flasche 12L/rot', kategorie_id: kat })).body;
+    item.code = (await admin.put(`/api/equipment/${item.id}/qr`, { neu: true })).body.code;
     const r = await admin.get(`/api/equipment/${item.id}/qr.png?download=1`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'image/png');
@@ -359,7 +399,11 @@ test('Mehrere QR-Codes als ZIP mit PNG-Bildern', async () => {
     const kat = kat0.id;
     const a = (await admin.post('/api/equipment', { name: 'ZIP A', kategorie_id: kat })).body;
     const b = (await admin.post('/api/equipment', { name: 'ZIP/B', kategorie_id: kat })).body;
-    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},99999`);
+    const ohne = (await admin.post('/api/equipment', { name: 'ZIP ohne Code', kategorie_id: kat })).body;
+    await admin.post('/api/qr/zuweisen', { ids: [a.id, b.id] });
+    a.code = (await admin.get(`/api/equipment/${a.id}`)).body.code;
+    b.code = (await admin.get(`/api/equipment/${b.id}`)).body.code;
+    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},${ohne.id},99999`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'application/zip');
     const zip = await JSZip.loadAsync(r.body);

@@ -268,7 +268,6 @@ async function buildPreview(buffer, { categories, existingByCode, existingBySeri
 
         // Komplett leere Zeilen überspringen
         if (Object.values(daten).every(v => v === null || v === undefined)) continue;
-        if (!daten.name) fehler.push('Bezeichnung fehlt');
 
         let aktion = 'neu', zielId = null;
         if (daten.code) {
@@ -279,7 +278,7 @@ async function buildPreview(buffer, { categories, existingByCode, existingBySeri
         if (daten.code && existingByCode.has(daten.code)) {
             zielId = existingByCode.get(daten.code);
         } else if (daten.code && !isValidCode(daten.code)) {
-            hinweise.push(`Code „${codeRaw}“ ist unbekannt – es wird ein neuer Code vergeben`);
+            hinweise.push(`Code „${codeRaw}“ ist unbekannt – das Gerät bekommt zunächst einen Platzhalter`);
             daten.code = null;
         } else if (daten.code) {
             hinweise.push(`Code ${codeRaw} wird übernommen`);
@@ -289,6 +288,7 @@ async function buildPreview(buffer, { categories, existingByCode, existingBySeri
             hinweise.push('Über die Seriennummer einem vorhandenen Gerät zugeordnet');
         }
         if (zielId) aktion = 'aktualisieren';
+        else if (!daten.name) fehler.push('Bezeichnung fehlt'); // beim Aktualisieren bleibt die bisherige
         if (fehler.length) aktion = 'fehler';
 
         zeilen.push({ zeile: r.nr, aktion, zielId, daten, fehler, hinweise });

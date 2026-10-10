@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage, formatCode } = require('../util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage, formatCode, kennung } = require('../util');
 const { requirePermission } = require('../session');
 
 const MAX_IMAGES_PER_ITEM = 20;
@@ -59,17 +59,21 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
         JOIN kategorien k ON k.id = e.kategorie_id
         LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
         WHERE e.verein_id = ?`;
-    const listQuery = db.prepare(`${SELECT_ITEMS} ORDER BY k.prefix, e.device_id`);
+    const listQuery = db.prepare(`${SELECT_ITEMS} ORDER BY k.prefix, e.device_id IS NULL, e.device_id, e.id`);
     const itemQuery = db.prepare(`${SELECT_ITEMS} AND e.id = ?`);
     const openLoan = db.prepare(`SELECT id, borrower FROM ausleihen WHERE equipment_id = ? AND zurueckgegeben_am IS NULL`);
 
+    // Kennung zum Anzeigen: Code (FL-7K3X) oder Platzhalter (FL-NEU17), solange noch kein QR-Code zugewiesen ist
+    const withKennung = (i) => ({ ...i, kennung: kennung(i.code, i.prefix, i.id) });
+
     app.get('/api/equipment', authenticate, (req, res) => {
-        res.json(listQuery.all(req.user.verein_id));
+        res.json(listQuery.all(req.user.verein_id).map(withKennung));
     });
 
     app.get('/api/equipment/:id', authenticate, (req, res) => {
-        const item = itemQuery.get(req.user.verein_id, requireId(req.params.id));
-        if (!item) throw new HttpError(404, 'Gerät nicht gefunden.');
+        const row = itemQuery.get(req.user.verein_id, requireId(req.params.id));
+        if (!row) throw new HttpError(404, 'Gerät nicht gefunden.');
+        const item = withKennung(row);
         res.json({
             ...item,
             bilder: db.prepare(`SELECT b.id, b.created_at, b.erstellt_von, n.username FROM bilder b LEFT JOIN nutzer n ON n.id = b.erstellt_von WHERE b.equipment_id = ? ORDER BY b.id`).all(item.id),
@@ -107,7 +111,9 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
         db.transaction(() => {
             inventory.prepareDelete(item);
             db.prepare(`DELETE FROM equipment WHERE id = ?`).run(item.id); // der Code wird dadurch frei
-            log(req.user.verein_id, req.user.id, null, 'geloescht', `${item.name} (${formatCode(item.device_id)}) gelöscht – der Code ist jetzt frei`);
+            log(req.user.verein_id, req.user.id, null, 'geloescht', item.device_id
+                ? `${item.name} (${formatCode(item.device_id)}) gelöscht – der Code ist jetzt frei`
+                : `${item.name} (${kennung(null, item.prefix, item.id)}) gelöscht`);
         })();
         for (const f of files) fs.rm(path.join(config.uploadDir, f.datei), { force: true }, () => {});
         res.json({ message: 'Gelöscht.' });

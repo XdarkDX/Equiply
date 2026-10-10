@@ -87,10 +87,13 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         } else {
             const ids = [...new Set(String(req.query.ids || '').split(',').map(Number).filter(n => Number.isInteger(n) && n > 0))];
             const get = db.prepare(`SELECT device_id, name FROM equipment WHERE id = ? AND verein_id = ?`);
+            let ohneCode = 0;
             for (const id of ids) {
                 const item = get.get(id, req.user.verein_id);
-                if (item) files.push({ code: item.device_id, name: `${fileName(`${formatCode(item.device_id)} ${item.name}`)}.png` });
+                if (item && !item.device_id) ohneCode++; // Geräte ohne QR-Code haben kein Bild
+                else if (item) files.push({ code: item.device_id, name: `${fileName(`${formatCode(item.device_id)} ${item.name}`)}.png` });
             }
+            if (!files.length && ohneCode) throw new HttpError(400, 'Die ausgewählten Geräte haben noch keinen QR-Code.');
         }
         if (!files.length) throw new HttpError(400, 'Keine Geräte ausgewählt.');
         if (files.length > MAX_ZIP) throw new HttpError(400, `Maximal ${MAX_ZIP} QR-Codes auf einmal.`);
@@ -127,21 +130,50 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         await sendSvg(req, res, ownCode(req, req.params.code));
     });
 
+    const itemWithCode = (req) => {
+        const item = inventory.getItem(req.user.verein_id, req.params.id);
+        if (!item.device_id) throw new HttpError(404, 'Dieses Gerät hat noch keinen QR-Code.');
+        return item;
+    };
+
     // QR-Code eines Geräts als Bild, Dateiname mit Code und Name
     app.get('/api/equipment/:id/qr.png', authenticate, async (req, res) => {
-        const item = inventory.getItem(req.user.verein_id, req.params.id);
+        const item = itemWithCode(req);
         await sendPng(req, res, item.device_id, `${fileName(`${formatCode(item.device_id)} ${item.name}`)}.png`, CACHE_ITEM);
     });
 
     app.get('/api/equipment/:id/qr.svg', authenticate, async (req, res) => {
-        const item = inventory.getItem(req.user.verein_id, req.params.id);
+        const item = itemWithCode(req);
         await sendSvg(req, res, item.device_id, CACHE_ITEM);
     });
 
-    // Anderes Schild verwenden: freien Code derselben Kategorie übernehmen, der bisherige wird frei
+    // QR-Code zuweisen: freien Code derselben Kategorie ({ code }) oder neu erzeugten ({ neu: true }).
+    // Hatte das Gerät schon einen Code, wird dieser frei.
     app.put('/api/equipment/:id/qr', ...canManageItems, (req, res) => {
         const id = requireId(req.params.id);
-        const code = db.transaction(() => inventory.replaceCode(req.user.verein_id, req.user.id, inventory.getItem(req.user.verein_id, id), req.body.code))();
-        res.json({ code, message: `Code ${formatCode(code)} übernommen.` });
+        const code = db.transaction(() => {
+            const item = inventory.getItem(req.user.verein_id, id);
+            if (req.body.neu === true) return inventory.assignNewCode(req.user.verein_id, req.user.id, item);
+            return inventory.assignCode(req.user.verein_id, req.user.id, item, req.body.code);
+        })();
+        res.json({ code, message: `QR-Code ${formatCode(code)} zugewiesen.` });
+    });
+
+    // Mehrere Geräte ohne QR-Code bekommen auf einmal neu erzeugte Codes (z. B. nach einem Import, danach Etiketten drucken)
+    app.post('/api/qr/zuweisen', ...canManageItems, (req, res) => {
+        const ids = Array.isArray(req.body.ids) ? [...new Set(req.body.ids.map(Number).filter(n => Number.isInteger(n) && n > 0))] : [];
+        if (!ids.length) throw new HttpError(400, 'Keine Geräte ausgewählt.');
+        if (ids.length > MAX_ZIP) throw new HttpError(400, `Maximal ${MAX_ZIP} Geräte auf einmal.`);
+        const anzahl = db.transaction(() => {
+            let n = 0;
+            for (const id of ids) {
+                const item = inventory.getItem(req.user.verein_id, id);
+                if (item.device_id) continue;
+                inventory.assignNewCode(req.user.verein_id, req.user.id, item);
+                n++;
+            }
+            return n;
+        })();
+        res.json({ anzahl, message: anzahl ? `${anzahl} QR-Code${anzahl === 1 ? '' : 's'} zugewiesen.` : 'Alle ausgewählten Geräte haben schon einen QR-Code.' });
     });
 };

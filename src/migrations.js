@@ -315,6 +315,9 @@ module.exports = [
                 setPrefix.run(p, k.id);
             }
 
+            // Welche Geräte hatten schon einen QR-Code? Nur die bekommen einen neuen Code, die anderen erst bei Zuweisung.
+            const hadCode = new Set(db.prepare(`SELECT equipment_id FROM qr_codes WHERE equipment_id IS NOT NULL`).all().map(r => r.equipment_id));
+
             // 2. Code-Tabelle neu: ein Gerät kann neben seinem aktuellen Code auch alte Codes haben
             //    (z. B. nach einem Kategoriewechsel) – alte Schilder funktionieren so weiter.
             db.exec(`
@@ -334,15 +337,58 @@ module.exports = [
                 CREATE INDEX idx_qr_codes_equipment ON qr_codes(equipment_id);
             `);
 
-            // 3. Jedes Gerät bekommt seinen neuen Code als Kennung; die alte Nummer bleibt als alter Code erhalten
+            // 3. Geräte mit QR-Code bekommen ihren neuen Code als Kennung; die alte Nummer bleibt als alter Code erhalten
             const insert = db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id, kategorie_id) VALUES (?, ?, ?, ?)`);
             const setCode = db.prepare(`UPDATE equipment SET device_id = ? WHERE id = ?`);
             for (const e of db.prepare(`SELECT id, verein_id, kategorie_id, device_id FROM equipment`).all()) {
                 insert.run(normalizeCode(e.device_id), e.verein_id, e.id, null);
+                if (!hadCode.has(e.id)) { setCode.run(`~${e.id}`, e.id); continue; } // vorläufig, Migration 8 macht daraus "kein Code"
                 let code;
                 do { code = prefixOf.get(e.kategorie_id) + randomPart(); } while (insert.run(code, e.verein_id, e.id, e.kategorie_id).changes === 0);
                 setCode.run(code, e.id);
             }
+        },
+    },
+    {
+        version: 8,
+        name: 'Geräte ohne QR-Code (Platzhalter wie FL-NEU17, bis ein Code zugewiesen wird)',
+        up(db) {
+            // device_id darf jetzt leer sein. Nur Codes, die in qr_codes wirklich zum Gerät gehören, bleiben erhalten.
+            db.exec(`
+                CREATE TABLE equipment_neu (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    verein_id     INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    kategorie_id  INTEGER NOT NULL REFERENCES kategorien(id),
+                    device_id     TEXT CHECK (device_id IS NULL OR length(trim(device_id)) > 0),
+                    name          TEXT NOT NULL CHECK (length(trim(name)) > 0),
+                    hersteller    TEXT,
+                    seriennummer  TEXT,
+                    groesse       TEXT,
+                    lagerort      TEXT,
+                    kaufdatum     TEXT CHECK (kaufdatum IS NULL OR kaufdatum ${ISO_DATE}),
+                    tuev          TEXT CHECK (tuev IS NULL OR tuev ${ISO_DATE}),
+                    condition     TEXT NOT NULL DEFAULT 'Gut' CHECK (condition IN ('Gut', 'Gebrauchsspuren', 'Reparaturbedürftig')),
+                    notes         TEXT,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW},
+                    updated_at    TEXT NOT NULL DEFAULT ${NOW},
+                    UNIQUE (verein_id, device_id)
+                );
+                INSERT INTO equipment_neu (id, verein_id, kategorie_id, device_id, name, hersteller, seriennummer, groesse, lagerort, kaufdatum,
+                                           tuev, condition, notes, created_at, updated_at)
+                SELECT e.id, e.verein_id, e.kategorie_id,
+                       CASE WHEN EXISTS (SELECT 1 FROM qr_codes q WHERE q.code = e.device_id AND q.equipment_id = e.id) THEN e.device_id END,
+                       e.name, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.kaufdatum, e.tuev, e.condition, e.notes, e.created_at, e.updated_at
+                FROM equipment e;
+                DROP TABLE equipment;
+                ALTER TABLE equipment_neu RENAME TO equipment;
+                CREATE INDEX idx_equipment_verein ON equipment(verein_id);
+                CREATE INDEX idx_equipment_kategorie ON equipment(kategorie_id);
+                CREATE TRIGGER trg_equipment_updated_at AFTER UPDATE ON equipment
+                FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+                BEGIN
+                    UPDATE equipment SET updated_at = ${NOW} WHERE id = NEW.id;
+                END;
+            `);
         },
     },
 ];
