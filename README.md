@@ -5,7 +5,7 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 
 ## Funktionen
 
-- **Inventar** mit Inventarnummer, Kategorie, Hersteller, Seriennummer, Größe, Lagerort, TÜV/Prüfdatum, Zustand und Notizen
+- **Inventar** mit Code, Kategorie, Hersteller, Seriennummer, Größe, Lagerort, TÜV/Prüfdatum, Zustand und Notizen
 - **Fotos** pro Gerät (auch direkt mit der Handykamera, werden automatisch verkleinert)
 - **Kommentare** pro Gerät, z. B. für Mängel oder Wartungshinweise
 - **Ausleihe & Rückgabe** mit geplantem Rückgabedatum, Zustand bei Rückgabe und vollständigem Verlauf
@@ -13,10 +13,14 @@ Läuft auf dem eigenen Server, alle Daten bleiben beim Verein.
 - **TÜV-Überwachung:** Warnung 3 Monate vorher, abgelaufene Geräte werden automatisch für die Ausleihe gesperrt
 - **Excel-/CSV-Import:** vorhandene Listen hochladen, Spalten werden automatisch erkannt, Vorschau vor dem Übernehmen, erneuter Import aktualisiert statt zu duplizieren
 - **Excel-Export** des kompletten Inventars, **Excel-Vorlage** zum Ausfüllen
-- **Feste QR-Codes** (z. B. `K7F3X9`): Ein Gerät bekommt einen Code erst, wenn man ihn zuweist (aus dem Vorrat, per Schild-Scan oder neu). Der Code ändert sich danach nie – auch nicht bei neuer Kategorie oder Nummer; ideal zum Lasern. Codes gelöschter Geräte werden wieder frei. Download als Bild (PNG, 1000 × 1000 px), Etiketten für A4-Bögen (3 × 7)
-- **Alles rund um QR-Codes an einem Ort** (Knopf „QR-Codes“): Geräte auswählen → Codes zuweisen, Etiketten drucken oder als Bilder (ZIP) herunterladen; freie Codes auf Vorrat
+- **Ein Code pro Gerät** (z. B. `FL-7K3X`): Er ist gleichzeitig die Kennung des Geräts und steht im QR-Code. Die ersten Buchstaben
+  zeigen die Kategorie (`FL` = Flaschen), der Rest ist zufällig. Jedes neue Gerät bekommt seinen Code automatisch.
+  Kommt ein Gerät in eine andere Kategorie, wird aus `FL-7K3X` → `AT-7K3X`; das alte Schild funktioniert trotzdem weiter.
+  Codes gelöschter Geräte werden frei und können für ein neues Gerät verwendet werden.
+- **QR-Codes** zum Herunterladen als Bild (PNG mit dem Code darunter), Etiketten für A4-Bögen (3 × 7), alles an einem Ort
+  (Knopf „QR-Codes“). **Freie Codes auf Vorrat** pro Kategorie, z. B. zum Lasern auf Stahl: Schild später scannen → Gerät damit anlegen
 - **Eingebauter QR-Scanner** (Kamera oder Foto), erkennt auch helle Codes auf dunklem Metall
-- **Eigene Kategorien** mit eigenem Nummernkreis (z. B. 1001–1999, bis zu 999 Geräte pro Kategorie; Nummern gelöschter Geräte werden wiederverwendet)
+- **Beliebig viele eigene Kategorien** – beim Anlegen genügt der Name, das Kürzel (z. B. `LA` für Lampen) wird automatisch und eindeutig vergeben
 - **Vereinslogo und -farbe:** Logo hochladen, die Oberfläche übernimmt automatisch die Farbe
 - **Mitglieder & Rollen** mit feinen Rechten (Ausleihe, Inventar, Team)
 - **Aktivitätsprotokoll:** wer hat wann was geändert
@@ -131,9 +135,9 @@ src/config.js          Konfiguration aus Umgebungsvariablen / .env
 src/db.js              Datenbankverbindung (SQLite) + Migrationen
 src/migrations.js      Datenbankschema (versioniert, wird beim Start automatisch aktualisiert)
 src/session.js         Login-Sitzungen, Rechte, Login-Bremse
-src/inventory.js       Inventar-Logik (Nummernvergabe, Änderungsprotokoll)
+src/inventory.js       Inventar-Logik (Codes, Kategorie-Kürzel, Änderungsprotokoll)
 src/importer.js        Excel-/CSV-Erkennung
-src/routes/            API: auth, team, equipment, transfer (Import/Export)
+src/routes/            API: auth, team, equipment, qr, transfer (Import/Export)
 public/                Oberfläche (HTML, JS, gebautes CSS)
 styles/app.css         Tailwind-Quelle für public/app.css
 deploy/install.sh      Installations- und Update-Skript

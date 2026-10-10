@@ -1,12 +1,11 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
-const { HttpError, CONDITIONS, CONDITION_LABELS, isIsoDate, today } = require('../util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, isIsoDate, today, normalizeCode, isValidCode, formatCode } = require('../util');
 const { requirePermission } = require('../session');
 const { buildPreview, makeCategoryResolver, MAX_ROWS } = require('../importer');
 
 const COLUMNS = [
-    { header: 'Inventarnummer', key: 'deviceId', width: 16 },
-    { header: 'QR-Code', key: 'qr_code', width: 11 },
+    { header: 'Code', key: 'code', width: 12 },
     { header: 'Bezeichnung', key: 'name', width: 32 },
     { header: 'Kategorie', key: 'category', width: 16 },
     { header: 'Hersteller', key: 'hersteller', width: 18 },
@@ -50,19 +49,20 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
 
     function existingMaps(vereinId) {
         const rows = db.prepare(`SELECT id, device_id, seriennummer FROM equipment WHERE verein_id = ?`).all(vereinId);
-        const byDeviceId = new Map(rows.map(r => [r.device_id.toLowerCase(), r.id]));
+
         const serialCount = new Map();
         for (const r of rows) if (r.seriennummer) serialCount.set(r.seriennummer.toLowerCase(), (serialCount.get(r.seriennummer.toLowerCase()) || []).concat(r.id));
         // Seriennummer nur verwenden, wenn sie eindeutig ist
         const bySerial = new Map([...serialCount].filter(([, ids]) => ids.length === 1).map(([k, ids]) => [k, ids[0]]));
-        const byQr = new Map(db.prepare(`SELECT code, equipment_id FROM qr_codes WHERE verein_id = ? AND equipment_id IS NOT NULL`).all(vereinId).map(r => [r.code, r.equipment_id]));
-        return { byDeviceId, bySerial, byQr };
+        // aktuelle und alte Codes (inkl. früherer Inventarnummern) der Geräte
+        const byCode = new Map(db.prepare(`SELECT code, equipment_id FROM qr_codes WHERE verein_id = ? AND equipment_id IS NOT NULL`).all(vereinId).map(r => [r.code, r.equipment_id]));
+        return { byCode, bySerial };
     }
 
     // --- Export ---
     app.get('/api/export/inventar.xlsx', authenticate, async (req, res) => {
         const items = db.prepare(`
-            SELECT e.device_id AS deviceId, (SELECT qc.code FROM qr_codes qc WHERE qc.equipment_id = e.id) AS qr_code, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
+            SELECT e.device_id AS code, e.name, k.name AS category, e.hersteller, e.seriennummer, e.groesse, e.lagerort, e.tuev,
                    e.condition, e.notes, CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status, a.borrower, a.rueckgabe_geplant AS returnDate
             FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id
             LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
@@ -74,7 +74,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         const columns = [...COLUMNS, ...EXPORT_EXTRA];
         styleSheet(sheet, columns);
         for (const i of items) {
-            sheet.addRow({ ...i, condition: CONDITION_LABELS[i.condition], tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
+            sheet.addRow({ ...i, code: formatCode(i.code), condition: CONDITION_LABELS[i.condition], tuev: toDate(i.tuev), returnDate: toDate(i.returnDate) });
         }
         sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
         await sendWorkbook(res, wb, `equiply-inventar-${today()}.xlsx`);
@@ -101,8 +101,8 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
             'So füllst du die Vorlage aus:',
             '',
             '• Pro Zeile ein Gerät. Nur „Bezeichnung“ ist Pflicht, alle anderen Spalten sind optional.',
-            '• Inventarnummer leer lassen → Equiply vergibt automatisch die nächste freie Nummer.',
-            '• Inventarnummer, die es schon gibt → das vorhandene Gerät wird aktualisiert (nur ausgefüllte Felder).',
+            '• Code leer lassen → Equiply vergibt automatisch einen Code (z. B. FL-7K3X, die ersten Buchstaben stehen für die Kategorie).',
+            '• Code, den es schon gibt → das vorhandene Gerät wird aktualisiert (nur ausgefüllte Felder).',
             `• Kategorie: ${kategorien.join(', ')}. Unbekannte Kategorien werden neu angelegt, leere landen in „Sonstiges“.`,
             '• Datumsangaben als Datum oder z. B. 31.12.2027. Beim TÜV reicht auch Monat/Jahr (z. B. 05/2027).',
             '• Zustand: Einwandfrei, Leichte Mängel oder Defekt.',
@@ -114,12 +114,11 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
 
     // --- Import, Schritt 1: Datei prüfen und Vorschau liefern (es wird noch nichts gespeichert) ---
     app.post('/api/import/vorschau', ...canManageItems, express.raw({ type: () => true, limit: '15mb' }), async (req, res) => {
-        const { byDeviceId, bySerial, byQr } = existingMaps(req.user.verein_id);
+        const { byCode, bySerial } = existingMaps(req.user.verein_id);
         const preview = await buildPreview(req.body, {
             categories: inventory.categories(req.user.verein_id),
-            existingByDeviceId: byDeviceId,
+            existingByCode: byCode,
             existingBySerial: bySerial,
-            existingByQr: byQr,
         });
         res.json(preview);
     });
@@ -137,7 +136,7 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
         db.transaction(() => {
             let categories = inventory.categories(vereinId);
             let resolve = makeCategoryResolver(categories);
-            const { byDeviceId, bySerial, byQr } = existingMaps(vereinId);
+            const { byCode, bySerial } = existingMaps(vereinId);
 
             for (const z of zeilen) {
                 const nr = z && z.zeile;
@@ -159,29 +158,25 @@ module.exports = function transferRoutes(app, { db, sessions, inventory }) {
                         for (const f of ['tuev']) if (d[f] && !isIsoDate(d[f])) throw new HttpError(400, `${f === 'tuev' ? 'TÜV' : 'Kaufdatum'} ist ungültig`);
                         if (d.condition && !CONDITIONS.includes(d.condition)) throw new HttpError(400, 'Zustand ist ungültig');
 
-                        const deviceId = d.deviceId ? String(d.deviceId).trim() : null;
-                        const qr = d.qr_code ? String(d.qr_code) : null;
-                        const zielId = (qr && byQr.get(qr)) || (deviceId ? byDeviceId.get(deviceId.toLowerCase())
-                            : (d.seriennummer ? bySerial.get(String(d.seriennummer).toLowerCase()) : undefined));
+                        const code = d.code ? normalizeCode(d.code) : null;
+                        const zielId = (code && byCode.get(code)) || (d.seriennummer ? bySerial.get(String(d.seriennummer).toLowerCase()) : undefined);
 
                         if (zielId) {
                             if (!aktualisieren) { result.uebersprungen++; return; }
                             const old = inventory.getItem(vereinId, zielId);
-                            let codeChanged = false;
-                            if (qr && inventory.codeOf(old.id) !== qr) { inventory.assignCode(vereinId, old.id, qr); byQr.set(qr, old.id); codeChanged = true; }
                             // Nur ausgefüllte Felder überschreiben, alles andere bleibt wie es ist
                             const merged = {};
                             for (const f of inventory.FIELDS) merged[f.key] = d[f.key] !== undefined && d[f.key] !== null && d[f.key] !== '' ? d[f.key] : old[f.key];
                             const fields = inventory.readFields(merged);
-                            const kat = kategorie || { id: old.kategorie_id, name: old.kategorie };
-                            if (inventory.update(vereinId, req.user.id, old, kat, fields) || codeChanged) result.aktualisiert++;
+                            const kat = kategorie || { id: old.kategorie_id, name: old.kategorie, prefix: old.prefix };
+                            const r = inventory.update(vereinId, req.user.id, old, kat, fields);
+                            byCode.set(r.code, old.id);
+                            if (r.changed) result.aktualisiert++;
                             else result.uebersprungen++;
                         } else {
                             const fields = inventory.readFields(d);
-                            const { id } = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, deviceId, qr);
-                            if (qr) byQr.set(qr, id);
-                            const created = db.prepare(`SELECT device_id FROM equipment WHERE id = ?`).get(id);
-                            byDeviceId.set(created.device_id.toLowerCase(), id);
+                            const { id } = inventory.create(vereinId, req.user.id, kategorie || resolve(null) || inventory.createCategory(vereinId, 'Sonstiges'), fields, code && isValidCode(code) ? code : null);
+                            byCode.set(db.prepare(`SELECT device_id FROM equipment WHERE id = ?`).get(id).device_id, id);
                             result.neu++;
                         }
                     })();

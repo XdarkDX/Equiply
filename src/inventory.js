@@ -1,6 +1,8 @@
 // Gemeinsame Inventar-Logik für Formular-API und Excel-Import
-const MAX_PER_CATEGORY = 999;
-const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalText, optionalDate, requireOneOf, requireId, formatDate, generateCode, normalizeCode, isValidCode } = require('./util');
+const {
+    HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalText, optionalDate, requireOneOf, requireId, formatDate,
+    randomPart, normalizeCode, isValidCode, isCategoryCode, formatCode, derivePrefix,
+} = require('./util');
 
 // Felder, die man bearbeiten kann, mit Anzeigenamen (für Protokoll, Export und Import)
 const FIELDS = [
@@ -14,26 +16,29 @@ const FIELDS = [
     { key: 'notes', label: 'Notizen', max: 2000 },
 ];
 
-function prefixConflict(a, b) {
-    return a.startsWith(b) || b.startsWith(a);
-}
-
+/*
+ * Gerätecodes (Tabelle qr_codes):
+ *  - aktueller Code eines Geräts:  equipment_id = Gerät und code = equipment.device_id
+ *  - alter Code eines Geräts:      equipment_id = Gerät, aber ein anderer Code (z. B. vor einem Kategoriewechsel) –
+ *                                  alte Schilder öffnen beim Scannen weiterhin das Gerät
+ *  - freier Code (Vorrat):         equipment_id = NULL, gehört zu einer Kategorie
+ */
 function createInventory(db) {
     const q = {
-        kategorien: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE verein_id = ? ORDER BY prefix`),
+        kategorien: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE verein_id = ? ORDER BY name COLLATE NOCASE`),
         kategorie: db.prepare(`SELECT id, name, prefix FROM kategorien WHERE id = ? AND verein_id = ?`),
-        deviceIdTaken: db.prepare(`SELECT id FROM equipment WHERE verein_id = ? AND device_id = ?`),
-        usedNrs: db.prepare(`SELECT device_id FROM equipment WHERE verein_id = ? AND length(device_id) = ? AND device_id GLOB ? || '[0-9][0-9][0-9]'`),
         insert: db.prepare(`INSERT INTO equipment (verein_id, kategorie_id, device_id, name, hersteller, seriennummer, groesse, lagerort, tuev, condition, notes)
                             VALUES (@verein_id, @kategorie_id, @device_id, @name, @hersteller, @seriennummer, @groesse, @lagerort, @tuev, @condition, @notes)`),
         update: db.prepare(`UPDATE equipment SET kategorie_id = @kategorie_id, device_id = @device_id, name = @name, hersteller = @hersteller, seriennummer = @seriennummer, groesse = @groesse,
                             lagerort = @lagerort, tuev = @tuev, condition = @condition, notes = @notes WHERE id = @id`),
-        byId: db.prepare(`SELECT e.*, k.name AS kategorie FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.id = ? AND e.verein_id = ?`),
-        codeByCode: db.prepare(`SELECT code, verein_id, equipment_id FROM qr_codes WHERE code = ?`),
-        codeOfItem: db.prepare(`SELECT code FROM qr_codes WHERE equipment_id = ?`),
-        insertCode: db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id) VALUES (?, ?, ?)`),
-        assignCode: db.prepare(`UPDATE qr_codes SET equipment_id = ? WHERE code = ?`),
-        releaseItem: db.prepare(`UPDATE qr_codes SET equipment_id = NULL WHERE equipment_id = ?`),
+        setDeviceCode: db.prepare(`UPDATE equipment SET device_id = ? WHERE id = ?`),
+        byId: db.prepare(`SELECT e.*, k.name AS kategorie, k.prefix FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id WHERE e.id = ? AND e.verein_id = ?`),
+        codeRow: db.prepare(`SELECT code, verein_id, equipment_id, kategorie_id FROM qr_codes WHERE code = ?`),
+        insertCode: db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id, kategorie_id) VALUES (?, ?, ?, ?)`),
+        claimCode: db.prepare(`UPDATE qr_codes SET equipment_id = ?, kategorie_id = ? WHERE code = ?`),
+        releaseCode: db.prepare(`UPDATE qr_codes SET equipment_id = NULL WHERE code = ?`),
+        makeOld: db.prepare(`UPDATE qr_codes SET kategorie_id = NULL WHERE code = ?`),
+        deleteOldCodes: db.prepare(`DELETE FROM qr_codes WHERE equipment_id = ? AND code <> ?`),
         log: db.prepare(`INSERT INTO aktivitaeten (verein_id, nutzer_id, equipment_id, aktion, details) VALUES (?, ?, ?, ?, ?)`),
     };
 
@@ -41,50 +46,48 @@ function createInventory(db) {
         q.log.run(vereinId, userId || null, equipmentId || null, aktion, details || null);
     }
 
+    // ---------- Kategorien ----------
     function getCategory(vereinId, id) {
         const k = q.kategorie.get(requireId(id, 'Kategorie'), vereinId);
         if (!k) throw new HttpError(400, 'Kategorie existiert nicht.');
         return k;
     }
 
-    function validatePrefix(vereinId, prefix, exceptId = null) {
-        if (typeof prefix !== 'string' || !/^[0-9A-Z]{1,4}$/.test(prefix)) throw new HttpError(400, 'Kürzel: 1–4 Zeichen, nur Ziffern und Großbuchstaben.');
-        const clash = q.kategorien.all(vereinId).find(k => k.id !== exceptId && prefixConflict(k.prefix, prefix));
-        if (clash) throw new HttpError(409, `Kürzel „${prefix}“ überschneidet sich mit „${clash.prefix}“ (${clash.name}). Inventarnummern wären nicht mehr eindeutig.`);
-        return prefix;
-    }
-
-    // Schlägt ein freies Kürzel vor: zuerst Ziffern 1–9, dann Buchstaben aus dem Namen
-    function suggestPrefix(vereinId, name) {
-        const existing = q.kategorien.all(vereinId).map(k => k.prefix);
-        const free = (p) => !existing.some(e => prefixConflict(e, p));
-        for (let i = 1; i <= 9; i++) if (free(String(i))) return String(i);
-        const letters = String(name).toUpperCase().replace(/Ä/g, 'AE').replace(/Ö/g, 'OE').replace(/Ü/g, 'UE').replace(/[^A-Z]/g, '') || 'K';
-        for (const len of [2, 3, 4]) if (letters.length >= len && free(letters.slice(0, len))) return letters.slice(0, len);
-        for (let i = 1; i < 1000; i++) if (free(letters[0] + i)) return (letters[0] + i).slice(0, 4);
-        throw new HttpError(409, 'Kein freies Kürzel gefunden.');
-    }
-
-    function createCategory(vereinId, name, prefix) {
+    // Beim Anlegen genügt der Name – das Kürzel (z. B. FL) wird automatisch und eindeutig vergeben
+    function createCategory(vereinId, name) {
         name = requireText(name, 'Kategoriename', 50);
-        prefix = prefix ? validatePrefix(vereinId, String(prefix).toUpperCase().trim()) : suggestPrefix(vereinId, name);
+        const prefix = derivePrefix(name, new Set(q.kategorien.all(vereinId).map(k => k.prefix)));
         const id = Number(db.prepare(`INSERT INTO kategorien (verein_id, name, prefix) VALUES (?, ?, ?)`).run(vereinId, name, prefix).lastInsertRowid);
         return { id, name, prefix };
     }
 
-    // Kleinste freie Inventarnummer der Kategorie: Kürzel + 3 Stellen (1001 … 1999, LA001 … LA999).
-    // Nummern gelöschter Geräte werden so wiederverwendet – alte QR-Etiketten passen dann zum neuen Gerät.
-    function nextDeviceId(vereinId, kategorie) {
-        const used = new Set(q.usedNrs.all(vereinId, kategorie.prefix.length + 3, kategorie.prefix)
-            .map(r => Number(r.device_id.slice(kategorie.prefix.length))));
-        for (let nr = 1; nr <= MAX_PER_CATEGORY; nr++) {
-            const id = kategorie.prefix + String(nr).padStart(3, '0');
-            if (!used.has(nr) && !q.deviceIdTaken.get(vereinId, id)) return id;
+    // ---------- Codes ----------
+    // Neuer, noch nie vergebener Code der Kategorie (optional mit Wunsch-Zufallsteil)
+    function newCode(vereinId, kategorie, equipmentId = null, wish = null) {
+        for (let i = 0; ; i++) {
+            const code = kategorie.prefix + (i === 0 && wish ? wish : randomPart());
+            if (q.insertCode.run(code, vereinId, equipmentId, kategorie.id).changes) return code;
         }
-        throw new HttpError(409, `Die Kategorie „${kategorie.name}“ ist voll (maximal ${MAX_PER_CATEGORY} Geräte).`);
     }
 
-    // Prüft Formulardaten und liefert ein sauberes Objekt für die Datenbank
+    // Prüft einen eingegebenen/gescannten Code, der einem Gerät der Kategorie gegeben werden soll
+    function checkCode(vereinId, raw, kategorie, equipmentId = null) {
+        const code = normalizeCode(raw);
+        if (!isValidCode(code)) throw new HttpError(400, `„${raw}“ ist kein gültiger Code.`);
+        const row = q.codeRow.get(code);
+        if (row && row.verein_id !== vereinId) throw new HttpError(409, `Der Code ${formatCode(code)} gehört zu einem anderen Verein.`);
+        if (row && row.equipment_id && row.equipment_id !== equipmentId) throw new HttpError(409, `Der Code ${formatCode(code)} ist schon einem anderen Gerät zugeordnet.`);
+        const fits = row && row.kategorie_id ? row.kategorie_id === kategorie.id : (isCategoryCode(code) && code.slice(0, -4) === kategorie.prefix);
+        if (!fits) throw new HttpError(409, `Der Code ${formatCode(code)} passt nicht zur Kategorie „${kategorie.name}“ (Codes beginnen dort mit ${kategorie.prefix}).`);
+        return { code, row };
+    }
+
+    function claim(vereinId, equipmentId, kategorie, checked) {
+        if (checked.row) q.claimCode.run(equipmentId, kategorie.id, checked.code);
+        else q.insertCode.run(checked.code, vereinId, equipmentId, kategorie.id);
+    }
+
+    // ---------- Geräte ----------
     function readFields(body) {
         const out = {};
         for (const f of FIELDS) {
@@ -96,61 +99,16 @@ function createInventory(db) {
         return out;
     }
 
-    // ---------- Feste QR-Codes ----------
-    // Erzeugt einen neuen, zufälligen Code (optional direkt einem Gerät zugeordnet)
-    function newCode(vereinId, equipmentId = null) {
-        for (;;) {
-            const code = generateCode();
-            if (q.insertCode.run(code, vereinId, equipmentId).changes) return code;
-        }
-    }
-
-    // Prüft einen eingegebenen/gescannten Code: liefert { code, row } oder wirft einen verständlichen Fehler
-    function checkCode(vereinId, raw, equipmentId = null) {
-        const code = normalizeCode(raw);
-        if (!isValidCode(code)) throw new HttpError(400, `„${raw}“ ist kein gültiger QR-Code.`);
-        const row = q.codeByCode.get(code);
-        if (row && row.verein_id !== vereinId) throw new HttpError(409, `QR-Code ${code} gehört zu einem anderen Verein.`);
-        if (row && row.equipment_id && row.equipment_id !== equipmentId) throw new HttpError(409, `QR-Code ${code} ist schon einem anderen Gerät zugeordnet.`);
-        return { code, row };
-    }
-
-    // Ordnet einem Gerät einen bestimmten Code zu (freier Code oder ein noch unbekannter, z. B. von einem fertigen Schild).
-    // Der bisherige Code des Geräts wird dabei frei.
-    function assignCode(vereinId, equipmentId, raw) {
-        const { code, row } = checkCode(vereinId, raw, equipmentId);
-        const old = q.codeOfItem.get(equipmentId);
-        q.releaseItem.run(equipmentId);
-        if (row) q.assignCode.run(equipmentId, code);
-        else q.insertCode.run(code, vereinId, equipmentId);
-        return { code, old: old ? old.code : null };
-    }
-
-    // Löst den Code vom Gerät; er wird wieder frei
-    function releaseCode(equipmentId) {
-        const old = q.codeOfItem.get(equipmentId);
-        q.releaseItem.run(equipmentId);
-        return old ? old.code : null;
-    }
-
-    function codeOf(equipmentId) {
-        const row = q.codeOfItem.get(equipmentId);
-        return row ? row.code : null;
-    }
-
-    function create(vereinId, userId, kategorie, fields, deviceId = null, qrCode = null) {
-        if (deviceId) {
-            deviceId = requireText(String(deviceId), 'Inventarnummer', 30);
-            if (q.deviceIdTaken.get(vereinId, deviceId)) throw new HttpError(409, `Inventarnummer ${deviceId} ist schon vergeben.`);
-        } else {
-            deviceId = nextDeviceId(vereinId, kategorie);
-        }
-        if (qrCode) checkCode(vereinId, qrCode); // vor dem Anlegen prüfen, damit kein halbes Gerät entsteht
-        const id = Number(q.insert.run({ ...fields, verein_id: vereinId, kategorie_id: kategorie.id, device_id: deviceId }).lastInsertRowid);
-        // QR-Codes werden nur ausdrücklich zugewiesen (nicht automatisch beim Anlegen)
-        const code = qrCode ? assignCode(vereinId, id, qrCode).code : null;
-        log(vereinId, userId, id, 'erstellt', `${fields.name} (${deviceId}) angelegt${code ? ` – QR-Code ${code}` : ''}`);
-        return { id, deviceId, qrCode: code };
+    // Legt ein Gerät an. Ohne Angabe bekommt es automatisch einen neuen Code seiner Kategorie,
+    // sonst den angegebenen (z. B. von einem schon gelaserten Schild aus dem Vorrat).
+    function create(vereinId, userId, kategorie, fields, wantedCode = null) {
+        const checked = wantedCode ? checkCode(vereinId, wantedCode, kategorie) : null;
+        let code = checked ? checked.code : null;
+        if (!code) do { code = kategorie.prefix + randomPart(); } while (q.codeRow.get(code));
+        const id = Number(q.insert.run({ ...fields, verein_id: vereinId, kategorie_id: kategorie.id, device_id: code }).lastInsertRowid);
+        claim(vereinId, id, kategorie, checked || { code, row: null });
+        log(vereinId, userId, id, 'erstellt', `${fields.name} (${formatCode(code)}) angelegt`);
+        return { id, code };
     }
 
     function display(key, value) {
@@ -161,25 +119,47 @@ function createInventory(db) {
         return value;
     }
 
-    // Aktualisiert ein Gerät und schreibt die Änderungen verständlich ins Protokoll
-    // Bei einem Kategoriewechsel bekommt das Gerät eine neue Nummer aus dem Bereich der neuen Kategorie.
+    // Aktualisiert ein Gerät und schreibt die Änderungen verständlich ins Protokoll.
+    // Bei einem Kategoriewechsel bekommt es das neue Kürzel (FL-7K3X -> AT-7K3X); der alte Code bleibt beim Scannen gültig.
     function update(vereinId, userId, old, kategorie, fields) {
         const moved = old.kategorie_id !== kategorie.id;
-        const deviceId = moved ? nextDeviceId(vereinId, kategorie) : old.device_id;
-        q.update.run({ ...fields, id: old.id, kategorie_id: kategorie.id, device_id: deviceId });
+        let code = old.device_id;
+        if (moved) {
+            q.makeOld.run(old.device_id);
+            const wish = isCategoryCode(old.device_id) ? old.device_id.slice(-4) : null;
+            code = newCode(vereinId, kategorie, old.id, wish);
+        }
+        q.update.run({ ...fields, id: old.id, kategorie_id: kategorie.id, device_id: code });
         const changes = [];
-        if (moved) changes.push(`Kategorie: ${old.kategorie} → ${kategorie.name}`, `Inventarnummer: ${old.device_id} → ${deviceId}`);
+        if (moved) changes.push(`Kategorie: ${old.kategorie} → ${kategorie.name}`, `Code: ${formatCode(old.device_id)} → ${formatCode(code)} (altes Schild bleibt gültig)`);
         for (const f of FIELDS) {
             if ((old[f.key] ?? null) !== (fields[f.key] ?? null)) changes.push(`${f.label}: ${display(f.key, old[f.key])} → ${display(f.key, fields[f.key])}`);
         }
-        if (!changes.length) return false;
+        if (!changes.length) return { changed: false, code };
 
         const onlyTuev = changes.length === 1 && old.tuev !== fields.tuev;
         const repaired = changes.length === 1 && old.condition === 'Reparaturbedürftig' && fields.condition !== 'Reparaturbedürftig';
         if (onlyTuev) log(vereinId, userId, old.id, 'tuev', `TÜV/Prüfung erneuert: gültig bis ${display('tuev', fields.tuev)}`);
         else if (repaired) log(vereinId, userId, old.id, 'repariert', 'Als repariert markiert');
         else log(vereinId, userId, old.id, 'bearbeitet', changes.join('; '));
-        return true;
+        return { changed: true, code };
+    }
+
+    // Anderes Schild verwenden: Gerät bekommt einen freien Code seiner Kategorie, der bisherige wird frei
+    function replaceCode(vereinId, userId, item, raw) {
+        const kategorie = { id: item.kategorie_id, name: item.kategorie, prefix: item.prefix };
+        const checked = checkCode(vereinId, raw, kategorie, item.id);
+        if (checked.code === item.device_id) return item.device_id;
+        q.releaseCode.run(item.device_id);
+        claim(vereinId, item.id, kategorie, checked);
+        q.setDeviceCode.run(checked.code, item.id);
+        log(vereinId, userId, item.id, 'qr', `Code ${formatCode(item.device_id)} → ${formatCode(checked.code)} (${formatCode(item.device_id)} ist jetzt frei)`);
+        return checked.code;
+    }
+
+    // Vor dem Löschen: alte Codes entfernen, der aktuelle Code wird wieder frei (Schild kann weiterverwendet werden)
+    function prepareDelete(item) {
+        q.deleteOldCodes.run(item.id, item.device_id);
     }
 
     function getItem(vereinId, id) {
@@ -188,7 +168,10 @@ function createInventory(db) {
         return item;
     }
 
-    return { FIELDS, log, newCode, checkCode, assignCode, releaseCode, codeOf, getCategory, createCategory, validatePrefix, suggestPrefix, nextDeviceId, readFields, create, update, getItem, categories: (v) => q.kategorien.all(v) };
+    return {
+        FIELDS, log, getCategory, createCategory, newCode, checkCode, readFields, create, update, replaceCode, prepareDelete, getItem,
+        categories: (v) => q.kategorien.all(v),
+    };
 }
 
 module.exports = { createInventory, FIELDS };

@@ -5,7 +5,7 @@ const { HttpError, DEFAULT_CATEGORIES, requireText, requireEmail, requirePasswor
 // Vergleichs-Hash für unbekannte Benutzernamen, damit die Antwortzeit nichts verrät
 const DUMMY_HASH = bcrypt.hashSync('dummy-passwort', 12);
 
-module.exports = function authRoutes(app, { db, config, sessions, limiter, log, sendLogo }) {
+module.exports = function authRoutes(app, { db, config, sessions, limiter, log, sendLogo, inventory }) {
     const { authenticate, startSession, endSession } = sessions;
     const vereinCount = db.prepare(`SELECT COUNT(*) AS c FROM vereine`);
 
@@ -45,8 +45,7 @@ module.exports = function authRoutes(app, { db, config, sessions, limiter, log, 
             if (vereinCount.get().c > 0 && !config.allowRegistration) throw new HttpError(403, 'Die Einrichtung ist bereits abgeschlossen. Bitte einloggen.');
             if (db.prepare(`SELECT 1 FROM vereine WHERE name = ?`).get(vereinName)) throw new HttpError(409, 'Vereinsname existiert bereits.');
             const vereinId = Number(db.prepare(`INSERT INTO vereine (name) VALUES (?)`).run(vereinName).lastInsertRowid);
-            const insertKat = db.prepare(`INSERT INTO kategorien (verein_id, name, prefix) VALUES (?, ?, ?)`);
-            for (const [name, prefix] of DEFAULT_CATEGORIES) insertKat.run(vereinId, name, prefix);
+            for (const name of DEFAULT_CATEGORIES) inventory.createCategory(vereinId, name);
             const id = Number(db.prepare(`INSERT INTO nutzer (verein_id, username, email, password_hash, role) VALUES (?, ?, ?, ?, 'admin')`)
                 .run(vereinId, username, email, hash).lastInsertRowid);
             log(vereinId, id, null, 'verein', `Verein „${vereinName}“ eingerichtet`);

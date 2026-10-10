@@ -72,7 +72,7 @@ function createApp(db, config) {
             if (/vereins_rollen/.test(err.message)) return res.status(409).json({ error: 'Eine Rolle mit diesem Namen gibt es schon.' });
             if (/kategorien\.name/.test(err.message)) return res.status(409).json({ error: 'Eine Kategorie mit diesem Namen gibt es schon.' });
             if (/vereine\.name/.test(err.message)) return res.status(409).json({ error: 'Dieser Vereinsname ist schon vergeben.' });
-            if (/equipment\.device_id/.test(err.message)) return res.status(409).json({ error: 'Diese Inventarnummer ist schon vergeben.' });
+            if (/equipment\.device_id/.test(err.message)) return res.status(409).json({ error: 'Dieser Code ist schon vergeben.' });
             return res.status(409).json({ error: 'Eintrag existiert bereits.' });
         }
         if (typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) return res.status(400).json({ error: 'Ungültige Daten.' });

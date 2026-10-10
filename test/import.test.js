@@ -20,7 +20,9 @@ test('Datumsformate werden erkannt', () => {
 test('Spaltenüberschriften werden zugeordnet', () => {
     assert.equal(matchHeader('Nächster TÜV'), 'tuev');
     assert.equal(matchHeader('TÜV-Datum'), 'tuev');
-    assert.equal(matchHeader('Inv.-Nr.'), 'deviceId');
+    assert.equal(matchHeader('Inv.-Nr.'), 'code');
+    assert.equal(matchHeader('Code'), 'code');
+    assert.equal(matchHeader('QR-Code'), 'code');
     assert.equal(matchHeader('Seriennummer'), 'seriennummer');
     assert.equal(matchHeader('Gerät'), 'name');
     assert.equal(matchHeader('Standort'), 'lagerort');
@@ -88,29 +90,36 @@ test('Excel-Import: Vorschau erkennt Spalten, Kategorien, Fehler – erst Übern
     assert.deepEqual(imp.body.neueKategorien, ['Lampen']);
 
     const items = (await admin.get('/api/equipment')).body;
-    assert.deepEqual(items.map(i => i.deviceId).sort(), ['1001', '2001', '6001']);
+    assert.deepEqual(items.map(i => i.code.slice(0, 2)).sort(), ['AT', 'FL', 'LA'], 'Code beginnt mit Kategorie-Kürzel');
     assert.equal(items.find(i => i.name === 'Flasche 12L').seriennummer, 'A-1');
 });
 
-test('Re-Import: vorhandene Inventarnummern werden aktualisiert, leere Felder bleiben', async () => {
+test('Re-Import: vorhandene Codes werden aktualisiert, leere Felder bleiben', async () => {
+    const items0 = (await admin.get('/api/equipment')).body;
+    const fl = items0.find(i => i.name === 'Flasche 12L');
     const file = await xlsx([
-        ['Inventarnummer', 'Bezeichnung', 'Lagerort', 'Hersteller'],
-        ['1001', 'Flasche 12L Stahl', 'Keller', null],
-        ['999', 'Neue Flasche', null, null],
+        ['Code', 'Bezeichnung', 'Lagerort', 'Hersteller'],
+        [`${fl.code.slice(0, 2)}-${fl.code.slice(2)}`.toLowerCase(), 'Flasche 12L Stahl', 'Keller', null],
+        ['1001', 'Neue Flasche', null, null],
     ]);
     const p = (await admin.post('/api/import/vorschau', file)).body;
+    assert.equal(p.spalten.code, 'Code');
     assert.deepEqual(p.zeilen.map(z => z.aktion), ['aktualisieren', 'neu']);
+    assert.match(p.zeilen[1].hinweise.join(), /neuer Code/, 'alte Zahlen-Nummer ist kein gültiger Code');
     const imp = (await admin.post('/api/import', { zeilen: p.zeilen })).body;
     assert.equal(imp.aktualisiert, 1);
     assert.equal(imp.neu, 1);
 
     const items = (await admin.get('/api/equipment')).body;
-    const f = items.find(i => i.deviceId === '1001');
+    const f = items.find(i => i.id === fl.id);
     assert.equal(f.name, 'Flasche 12L Stahl');
     assert.equal(f.lagerort, 'Keller');
     assert.equal(f.hersteller, 'Faber', 'leere Zelle überschreibt nicht');
     assert.equal(f.category, 'Flaschen', 'Kategorie bleibt');
-    assert.equal(items.find(i => i.deviceId === '999').category, 'Sonstiges');
+    assert.equal(f.code, fl.code, 'Code bleibt');
+    const neu = items.find(i => i.name === 'Neue Flasche');
+    assert.equal(neu.category, 'Sonstiges');
+    assert.match(neu.code, /^SO/);
 
     const skip = (await admin.post('/api/import', { zeilen: p.zeilen.slice(0, 1), aktualisieren: false })).body;
     assert.equal(skip.uebersprungen, 1);
@@ -140,7 +149,8 @@ test('Export und Vorlage sind gültige Excel-Dateien und wieder importierbar', a
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(exp.body);
     const ws = wb.getWorksheet('Inventar');
-    assert.equal(ws.getRow(1).getCell(1).value, 'Inventarnummer');
+    assert.equal(ws.getRow(1).getCell(1).value, 'Code');
+    assert.match(ws.getRow(2).getCell(1).value, /^[A-Z]{2}-[0-9A-Z]{4}$/, 'Code mit Bindestrich');
     assert.equal(ws.actualRowCount, 1 + (await admin.get('/api/equipment')).body.length);
 
     // Export direkt wieder importieren -> alles wird als "aktualisieren" erkannt
@@ -155,22 +165,19 @@ test('Export und Vorlage sind gültige Excel-Dateien und wieder importierbar', a
     assert.deepEqual(wb2.worksheets.map(w => w.name), ['Inventar', 'Hinweise']);
 });
 
-test('Re-Import erkennt Geräte am festen QR-Code, auch wenn sich die Inventarnummer geändert hat', async () => {
-    let items = (await admin.get('/api/equipment')).body;
-    let f = items.find(i => i.deviceId === '1001');
-    await admin.put(`/api/equipment/${f.id}/qr`, { neu: true });
-    items = (await admin.get('/api/equipment')).body;
-    f = items.find(i => i.deviceId === '1001');
+test('Re-Import mit geänderter Kategorie: neuer Code, alter Code bleibt gültig; Vorrats-Code wird übernommen', async () => {
+    const items = (await admin.get('/api/equipment')).body;
+    const f = items.find(i => i.name === 'Flasche 12L Stahl');
     const kats = (await admin.get('/api/kategorien')).body;
-    // Kategorie in Excel geändert, Inventarnummer veraltet – Zuordnung trotzdem über den QR-Code
+    const blei = kats.find(k => k.name === 'Blei');
+    const vorrat = (await admin.post('/api/qr/frei', { anzahl: 1, kategorie_id: blei.id })).body.codes[0];
     const file = await xlsx([
-        ['QR-Code', 'Inventarnummer', 'Bezeichnung', 'Kategorie'],
-        [f.qr_code.toLowerCase(), '1001', 'Flasche umsortiert', 'Sonstiges'],
-        ['NEW234', '', 'Gerät mit vorgelasertem Schild', 'Blei'],
-        ['NEW234', '', 'Doppelt', 'Blei'],
+        ['Code', 'Bezeichnung', 'Kategorie'],
+        [f.code, 'Flasche umsortiert', 'Sonstiges'],
+        [vorrat, 'Gerät mit vorgelasertem Schild', 'Blei'],
+        [vorrat, 'Doppelt', 'Blei'],
     ]);
     const p = (await admin.post('/api/import/vorschau', file)).body;
-    assert.equal(p.spalten.qr_code, 'QR-Code');
     assert.deepEqual(p.zeilen.map(z => z.aktion), ['aktualisieren', 'neu', 'fehler']);
     const r = (await admin.post('/api/import', { zeilen: p.zeilen.filter(z => z.aktion !== 'fehler') })).body;
     assert.equal(r.aktualisiert, 1);
@@ -178,7 +185,9 @@ test('Re-Import erkennt Geräte am festen QR-Code, auch wenn sich die Inventarnu
     const after = (await admin.get('/api/equipment')).body;
     const moved = after.find(i => i.id === f.id);
     assert.equal(moved.category, 'Sonstiges');
-    assert.equal(moved.qr_code, f.qr_code, 'QR-Code bleibt');
-    assert.equal(after.find(i => i.name === 'Gerät mit vorgelasertem Schild').qr_code, 'NEW234');
-    assert.ok(kats.length);
+    assert.equal(moved.code, 'SO' + f.code.slice(2), 'neues Kürzel, gleicher Zufallsteil');
+    assert.equal(after.find(i => i.name === 'Gerät mit vorgelasertem Schild').code, vorrat);
+    // Nochmal mit altem Code importieren -> wird über den alten Code gefunden
+    const p2 = (await admin.post('/api/import/vorschau', await xlsx([['Code', 'Bezeichnung'], [f.code, 'Flasche umsortiert']]))).body;
+    assert.equal(p2.zeilen[0].aktion, 'aktualisieren');
 });

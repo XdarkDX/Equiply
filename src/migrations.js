@@ -1,7 +1,7 @@
 // Datenbank-Migrationen. Jede Migration läuft genau einmal und in einer Transaktion.
 // Neue Änderungen am Schema immer als NEUE Migration hinten anhängen – bestehende nie verändern.
 
-const { generateCode } = require('./util');
+const { generateCode, randomPart, derivePrefix, normalizeCode } = require('./util');
 
 const NOW = `(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
 const ISO_DATE = `GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`;
@@ -293,6 +293,56 @@ module.exports = [
         name: 'Impressum pro Verein',
         up(db) {
             db.exec(`ALTER TABLE vereine ADD COLUMN impressum TEXT`);
+        },
+    },
+    {
+        version: 7,
+        name: 'Gerätecode als einzige Kennung (Kategorie-Kürzel + Zufallsteil, z. B. FL-7K3X)',
+        up(db) {
+            // 1. Kategorie-Kürzel aus dem Namen bilden (Flaschen -> FL). Zwischenschritt über eindeutige
+            //    Platzhalter, damit sich alte und neue Kürzel beim Umbenennen nicht in die Quere kommen.
+            const kategorien = db.prepare(`SELECT id, verein_id, name FROM kategorien ORDER BY verein_id, id`).all();
+            const setPrefix = db.prepare(`UPDATE kategorien SET prefix = ? WHERE id = ?`);
+            for (const k of kategorien) setPrefix.run('0' + k.id.toString(36).toUpperCase().padStart(3, '0').slice(-3), k.id);
+            const usedByVerein = new Map();
+            const prefixOf = new Map();
+            for (const k of kategorien) {
+                if (!usedByVerein.has(k.verein_id)) usedByVerein.set(k.verein_id, new Set());
+                const used = usedByVerein.get(k.verein_id);
+                const p = derivePrefix(k.name, used);
+                used.add(p);
+                prefixOf.set(k.id, p);
+                setPrefix.run(p, k.id);
+            }
+
+            // 2. Code-Tabelle neu: ein Gerät kann neben seinem aktuellen Code auch alte Codes haben
+            //    (z. B. nach einem Kategoriewechsel) – alte Schilder funktionieren so weiter.
+            db.exec(`
+                CREATE TABLE qr_codes_neu (
+                    code          TEXT PRIMARY KEY CHECK (length(code) BETWEEN 2 AND 20),
+                    verein_id     INTEGER NOT NULL REFERENCES vereine(id) ON DELETE CASCADE,
+                    equipment_id  INTEGER REFERENCES equipment(id) ON DELETE SET NULL,
+                    kategorie_id  INTEGER REFERENCES kategorien(id) ON DELETE CASCADE,
+                    created_at    TEXT NOT NULL DEFAULT ${NOW}
+                );
+                -- Bisher zugewiesene Codes bleiben als alte Codes ihres Geräts gültig; freie Codes ohne Kategorie entfallen
+                INSERT INTO qr_codes_neu (code, verein_id, equipment_id, created_at)
+                    SELECT code, verein_id, equipment_id, created_at FROM qr_codes WHERE equipment_id IS NOT NULL;
+                DROP TABLE qr_codes;
+                ALTER TABLE qr_codes_neu RENAME TO qr_codes;
+                CREATE INDEX idx_qr_codes_verein ON qr_codes(verein_id);
+                CREATE INDEX idx_qr_codes_equipment ON qr_codes(equipment_id);
+            `);
+
+            // 3. Jedes Gerät bekommt seinen neuen Code als Kennung; die alte Nummer bleibt als alter Code erhalten
+            const insert = db.prepare(`INSERT OR IGNORE INTO qr_codes (code, verein_id, equipment_id, kategorie_id) VALUES (?, ?, ?, ?)`);
+            const setCode = db.prepare(`UPDATE equipment SET device_id = ? WHERE id = ?`);
+            for (const e of db.prepare(`SELECT id, verein_id, kategorie_id, device_id FROM equipment`).all()) {
+                insert.run(normalizeCode(e.device_id), e.verein_id, e.id, null);
+                let code;
+                do { code = prefixOf.get(e.kategorie_id) + randomPart(); } while (insert.run(code, e.verein_id, e.id, e.kategorie_id).changes === 0);
+                setCode.run(code, e.id);
+            }
         },
     },
 ];

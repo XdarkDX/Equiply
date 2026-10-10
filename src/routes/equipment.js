@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage } = require('../util');
+const { HttpError, CONDITIONS, CONDITION_LABELS, requireText, optionalDate, requireOneOf, requireId, today, formatDate, detectImage, formatCode } = require('../util');
 const { requirePermission } = require('../session');
 
 const MAX_IMAGES_PER_ITEM = 20;
@@ -18,21 +18,21 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
     app.get('/api/kategorien', authenticate, (req, res) => {
         res.json(db.prepare(`
             SELECT k.id, k.name, k.prefix, (SELECT COUNT(*) FROM equipment e WHERE e.kategorie_id = k.id) AS anzahl
-            FROM kategorien k WHERE k.verein_id = ? ORDER BY k.prefix`).all(req.user.verein_id));
+            FROM kategorien k WHERE k.verein_id = ? ORDER BY k.name COLLATE NOCASE`).all(req.user.verein_id));
     });
 
     app.post('/api/kategorien', ...canManageItems, (req, res) => {
-        const k = inventory.createCategory(req.user.verein_id, req.body.name, req.body.prefix || null);
+        const k = inventory.createCategory(req.user.verein_id, req.body.name);
         log(req.user.verein_id, req.user.id, null, 'kategorie', `Kategorie „${k.name}“ (Kürzel ${k.prefix}) erstellt`);
         res.status(201).json(k);
     });
 
     app.put('/api/kategorien/:id', ...canManageItems, (req, res) => {
         const k = inventory.getCategory(req.user.verein_id, req.params.id);
+        // Nur der Name ist änderbar – das Kürzel bleibt, damit vorhandene Codes und Schilder stimmen
         const name = requireText(req.body.name, 'Kategoriename', 50);
-        const prefix = inventory.validatePrefix(req.user.verein_id, String(req.body.prefix || '').toUpperCase().trim(), k.id);
-        db.prepare(`UPDATE kategorien SET name = ?, prefix = ? WHERE id = ?`).run(name, prefix, k.id);
-        log(req.user.verein_id, req.user.id, null, 'kategorie', `Kategorie „${k.name}“ geändert: ${name} (Kürzel ${prefix})`);
+        db.prepare(`UPDATE kategorien SET name = ? WHERE id = ?`).run(name, k.id);
+        if (name !== k.name) log(req.user.verein_id, req.user.id, null, 'kategorie', `Kategorie „${k.name}“ umbenannt in „${name}“`);
         res.json({ message: 'Gespeichert.' });
     });
 
@@ -48,14 +48,13 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
 
     // --- Inventar ---
     const SELECT_ITEMS = `
-        SELECT e.id, e.device_id AS deviceId, e.name, e.kategorie_id, k.name AS category, e.hersteller, e.seriennummer, e.groesse,
+        SELECT e.id, e.device_id AS code, e.name, e.kategorie_id, k.name AS category, e.hersteller, e.seriennummer, e.groesse,
                e.lagerort, e.tuev, e.condition, e.notes, e.created_at, e.updated_at,
                CASE WHEN a.id IS NULL THEN 'Verfügbar' ELSE 'Ausgeliehen' END AS status,
                a.borrower, a.rueckgabe_geplant AS returnDate, a.ausgeliehen_am,
                (SELECT b.id FROM bilder b WHERE b.equipment_id = e.id ORDER BY b.id LIMIT 1) AS bild_id,
                (SELECT COUNT(*) FROM bilder b WHERE b.equipment_id = e.id) AS bilder_anzahl,
-               (SELECT COUNT(*) FROM kommentare c WHERE c.equipment_id = e.id) AS kommentare_anzahl,
-               (SELECT qc.code FROM qr_codes qc WHERE qc.equipment_id = e.id) AS qr_code
+               (SELECT COUNT(*) FROM kommentare c WHERE c.equipment_id = e.id) AS kommentare_anzahl, k.prefix
         FROM equipment e
         JOIN kategorien k ON k.id = e.kategorie_id
         LEFT JOIN ausleihen a ON a.equipment_id = e.id AND a.zurueckgegeben_am IS NULL
@@ -89,26 +88,26 @@ module.exports = function equipmentRoutes(app, { db, config, sessions, inventory
     app.post('/api/equipment', ...canManageItems, (req, res) => {
         const kategorie = inventory.getCategory(req.user.verein_id, req.body.kategorie_id);
         const fields = inventory.readFields(req.body);
-        const result = db.transaction(() => inventory.create(req.user.verein_id, req.user.id, kategorie, fields, null, req.body.qr_code || null))();
+        const result = db.transaction(() => inventory.create(req.user.verein_id, req.user.id, kategorie, fields, req.body.code || null))();
         res.status(201).json(result);
     });
 
     app.put('/api/equipment/:id', ...canManageItems, (req, res) => {
-        db.transaction(() => {
+        const result = db.transaction(() => {
             const old = inventory.getItem(req.user.verein_id, req.params.id);
             const kategorie = inventory.getCategory(req.user.verein_id, req.body.kategorie_id);
-            inventory.update(req.user.verein_id, req.user.id, old, kategorie, inventory.readFields(req.body));
+            return { ...inventory.update(req.user.verein_id, req.user.id, old, kategorie, inventory.readFields(req.body)), alt: old.device_id };
         })();
-        res.json({ message: 'Gespeichert.' });
+        res.json({ message: 'Gespeichert.', code: result.code, codeGeaendert: result.code !== result.alt });
     });
 
     app.delete('/api/equipment/:id', ...canManageItems, (req, res) => {
         const item = inventory.getItem(req.user.verein_id, req.params.id);
         const files = db.prepare(`SELECT datei FROM bilder WHERE equipment_id = ?`).all(item.id);
         db.transaction(() => {
-            db.prepare(`DELETE FROM equipment WHERE id = ?`).run(item.id);
-            const code = inventory.codeOf(item.id);
-            log(req.user.verein_id, req.user.id, null, 'geloescht', `${item.name} (${item.device_id}) gelöscht${code ? ` – QR-Code ${code} ist jetzt frei` : ''}`);
+            inventory.prepareDelete(item);
+            db.prepare(`DELETE FROM equipment WHERE id = ?`).run(item.id); // der Code wird dadurch frei
+            log(req.user.verein_id, req.user.id, null, 'geloescht', `${item.name} (${formatCode(item.device_id)}) gelöscht – der Code ist jetzt frei`);
         })();
         for (const f of files) fs.rm(path.join(config.uploadDir, f.datei), { force: true }, () => {});
         res.json({ message: 'Gelöscht.' });

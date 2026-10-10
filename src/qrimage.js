@@ -1,4 +1,4 @@
-// Erzeugt das QR-Bild zum Herunterladen: QR-Code oben, darunter gut lesbar der Code (z. B. K7F3X9).
+// Erzeugt das QR-Bild zum Herunterladen: QR-Code oben, darunter gut lesbar der Code (z. B. FL-7K3X).
 const path = require('path');
 const QRCode = require('qrcode');
 const { Resvg } = require('@resvg/resvg-js');
@@ -27,7 +27,7 @@ function qrPngWithCode(url, code) {
         <rect width="100%" height="100%" fill="#fff"/>
         <path d="${modules}" fill="#000" shape-rendering="crispEdges"/>
         <text x="${total / 2}" y="${total + fontSize * 0.55}" font-family="DejaVu Sans" font-weight="bold" font-size="${fontSize}"
-              letter-spacing="${fontSize * 0.12}" text-anchor="middle" fill="#000">${code.replace(/[^0-9A-Z]/g, '')}</text>
+              letter-spacing="${fontSize * 0.12}" text-anchor="middle" fill="#000">${code.replace(/[^0-9A-Z-]/g, '')}</text>
     </svg>`;
 
     const resvg = new Resvg(svg, {

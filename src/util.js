@@ -2,7 +2,7 @@ const crypto = require('crypto');
 
 const CONDITIONS = ['Gut', 'Gebrauchsspuren', 'Reparaturbedürftig'];
 const CONDITION_LABELS = { Gut: 'Einwandfrei', Gebrauchsspuren: 'Leichte Mängel', Reparaturbedürftig: 'Defekt' };
-const DEFAULT_CATEGORIES = [['Flaschen', '1'], ['Atemregler', '2'], ['Jackets', '3'], ['Blei', '4'], ['Sonstiges', '5']];
+const DEFAULT_CATEGORIES = ['Flaschen', 'Atemregler', 'Jackets', 'Blei', 'Sonstiges'];
 const MIN_PASSWORD_LENGTH = 8;
 
 class HttpError extends Error {
@@ -75,24 +75,60 @@ function detectImage(buf) {
     return null;
 }
 
-// ---------- Feste QR-Codes ----------
-// Crockford-Base32: keine leicht verwechselbaren Zeichen (kein I, L, O, U)
+// ---------- Gerätecodes ----------
+// Aufbau: Kategorie-Kürzel (2 Buchstaben, z. B. FL) + 4 zufällige Zeichen, angezeigt als „FL-7K3X“.
+// Der Zufallsteil nutzt Crockford-Base32: keine leicht verwechselbaren Zeichen (kein I, L, O, U).
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-function generateCode(length = 6) {
-    let code = '';
-    for (let i = 0; i < length; i++) code += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
-    return code;
+const RANDOM_LENGTH = 4;
+function randomPart(length = RANDOM_LENGTH) {
+    let s = '';
+    for (let i = 0; i < length; i++) s += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+    return s;
 }
-// Eingaben vereinheitlichen: Großbuchstaben, O -> 0, I/L -> 1, Leer- und Sonderzeichen weg
+const generateCode = (length = 6) => randomPart(length); // für ältere Migrationen
+// Eingaben vereinheitlichen: Großbuchstaben, Bindestriche/Leerzeichen weg; im Zufallsteil O -> 0, I/L -> 1
 function normalizeCode(value) {
-    return String(value ?? '').toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/[^0-9A-Z]/g, '');
+    const s = String(value ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (s.length < 6) return s;
+    const tail = s.slice(-RANDOM_LENGTH).replace(/O/g, '0').replace(/[IL]/g, '1');
+    return s.slice(0, -RANDOM_LENGTH) + tail;
 }
+const NEW_CODE = /^[A-Z]{2,3}[0-9A-HJKMNP-TV-Z]{4}$/;
+const OLD_CODE = /^[0-9A-HJKMNP-TV-Z]{6}$/; // ältere Codes ohne Kategorie (funktionieren beim Scannen weiter)
 function isValidCode(code) {
-    return /^[0-9A-HJKMNP-TV-Z]{4,12}$/.test(code);
+    return NEW_CODE.test(code) || OLD_CODE.test(code);
+}
+function isCategoryCode(code) {
+    return NEW_CODE.test(code);
+}
+// FL7K3X -> FL-7K3X
+function formatCode(code) {
+    return code && NEW_CODE.test(code) ? `${code.slice(0, -RANDOM_LENGTH)}-${code.slice(-RANDOM_LENGTH)}` : code;
+}
+
+// Kürzel aus dem Kategorienamen: zuerst die ersten zwei Buchstaben (Flaschen -> FL),
+// sonst eine andere eindeutige Kombination; bei mehr als 676 Kategorien drei Buchstaben.
+function derivePrefix(name, used) {
+    const umlaut = (t) => t.toUpperCase().replace(/Ä/g, 'AE').replace(/Ö/g, 'OE').replace(/Ü/g, 'UE').replace(/ß/g, 'SS');
+    const words = umlaut(String(name)).split(/[^A-Z]+/).filter(Boolean);
+    const letters = words.join('') || 'X';
+    const AZ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    function* candidates() {
+        if (letters.length > 1) yield letters.slice(0, 2);
+        if (words.length > 1) yield words[0][0] + words[1][0];
+        for (let i = 2; i < letters.length; i++) yield letters[0] + letters[i];
+        for (const b of AZ) yield letters[0] + b;
+        for (const a of AZ) for (const b of AZ) yield a + b;
+        if (letters.length > 2) yield letters.slice(0, 3);
+        for (const c of AZ) yield letters.slice(0, 2).padEnd(2, 'X') + c;
+        for (const a of AZ) for (const b of AZ) for (const c of AZ) yield a + b + c;
+    }
+    for (const p of candidates()) if (!used.has(p)) return p;
+    throw new HttpError(409, 'Es konnte kein freies Kürzel gefunden werden.');
 }
 
 module.exports = {
     CONDITIONS, CONDITION_LABELS, DEFAULT_CATEGORIES, MIN_PASSWORD_LENGTH, HttpError,
     requireText, optionalText, requireEmail, requirePassword, optionalDate, isIsoDate, requireOneOf, requireId,
-    today, formatDate, normalizeKey, detectImage, generateCode, normalizeCode, isValidCode,
+    today, formatDate, normalizeKey, detectImage, randomPart, generateCode, normalizeCode, isValidCode, isCategoryCode, formatCode, derivePrefix,
 };

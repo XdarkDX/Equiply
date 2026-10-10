@@ -6,8 +6,8 @@ const MAX_ROWS = 5000;
 
 // Spaltenüberschriften (normalisiert) -> Feld
 const HEADER_SYNONYMS = {
-    deviceId: ['inventarnummer', 'inventarnr', 'invnr', 'inventar', 'nummer', 'nr', 'id', 'systemid', 'geraetenummer', 'geraetenr', 'geraeteid', 'kennung'],
-    qr_code: ['qrcode', 'qr', 'qrid', 'qrkennung', 'qrcodeid', 'code'],
+    code: ['code', 'geraetecode', 'qrcode', 'qr', 'qrid', 'qrkennung', 'qrcodeid', 'inventarnummer', 'inventarnr', 'invnr', 'inventar',
+        'nummer', 'nr', 'id', 'systemid', 'geraetenummer', 'geraetenr', 'geraeteid', 'kennung'],
     name: ['bezeichnung', 'name', 'geraet', 'geraetename', 'artikel', 'artikelname', 'gegenstand', 'equipment', 'titel', 'item', 'produkt', 'modell'],
     kategorie: ['kategorie', 'kategorien', 'typ', 'art', 'gruppe', 'category', 'geraetetyp', 'geraeteart'],
     hersteller: ['hersteller', 'marke', 'brand', 'manufacturer', 'fabrikat'],
@@ -20,7 +20,7 @@ const HEADER_SYNONYMS = {
     notes: ['notizen', 'notiz', 'bemerkung', 'bemerkungen', 'kommentar', 'kommentare', 'anmerkung', 'anmerkungen', 'info', 'hinweis', 'notes', 'beschreibung'],
 };
 // Teilwörter, falls keine exakte Übereinstimmung gefunden wurde
-const HEADER_CONTAINS = [['qrcode', 'qr_code'], ['tuev', 'tuev'], ['pruef', 'tuev'], ['wartung', 'tuev'], ['serien', 'seriennummer'], ['inventar', 'deviceId'],
+const HEADER_CONTAINS = [['code', 'code'], ['tuev', 'tuev'], ['pruef', 'tuev'], ['wartung', 'tuev'], ['serien', 'seriennummer'], ['inventar', 'code'],
     ['bezeichnung', 'name'], ['kategorie', 'kategorie'], ['hersteller', 'hersteller'], ['lagerort', 'lagerort'], ['standort', 'lagerort'],
     ['zustand', 'condition'], ['bemerk', 'notes'], ['notiz', 'notes'], ['groesse', 'groesse']];
 
@@ -213,9 +213,9 @@ function makeCategoryResolver(categories) {
 
 /**
  * Liest die Datei und bereitet jede Zeile auf.
- * existing: Map deviceId -> id und Map seriennummer -> id (der Geräte im Verein)
+ * existingByCode: Code (auch alte Codes) -> Geräte-ID, existingBySerial: Seriennummer -> Geräte-ID
  */
-async function buildPreview(buffer, { categories, existingByDeviceId, existingBySerial, existingByQr = new Map() }) {
+async function buildPreview(buffer, { categories, existingByCode, existingBySerial }) {
     const rows = await readFile(buffer);
     if (!rows.length) throw new HttpError(400, 'Die Datei ist leer.');
     const { row: headerRow, mapping, ignored } = detectColumns(rows);
@@ -223,8 +223,7 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
     if (dataRows.length > MAX_ROWS) throw new HttpError(400, `Zu viele Zeilen (${dataRows.length}). Maximal ${MAX_ROWS} pro Import.`);
 
     const resolveCategory = makeCategoryResolver(categories);
-    const seenDeviceIds = new Map();
-    const seenQr = new Map();
+    const seenCodes = new Map();
     const newCategories = new Set();
     const get = (r, field) => (mapping[field] ? r.values[mapping[field].col] ?? null : undefined);
 
@@ -238,11 +237,10 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
             if (v !== undefined) daten[field] = toText(v, 100);
         }
         if (mapping.notes) daten.notes = toText(get(r, 'notes'), 2000);
-        if (mapping.deviceId) daten.deviceId = toText(get(r, 'deviceId'), 30);
-        if (mapping.qr_code) {
-            const raw = toText(get(r, 'qr_code'), 30);
-            daten.qr_code = raw ? normalizeCode(raw) : null;
-            if (raw && !isValidCode(daten.qr_code)) fehler.push(`QR-Code „${raw}“ ist ungültig`);
+        let codeRaw = null;
+        if (mapping.code) {
+            codeRaw = toText(get(r, 'code'), 30);
+            daten.code = codeRaw ? normalizeCode(codeRaw) : null;
         }
         daten.name = toText(get(r, 'name'), 100);
 
@@ -273,19 +271,20 @@ async function buildPreview(buffer, { categories, existingByDeviceId, existingBy
         if (!daten.name) fehler.push('Bezeichnung fehlt');
 
         let aktion = 'neu', zielId = null;
-        if (daten.qr_code) {
-            if (seenQr.has(daten.qr_code)) fehler.push(`QR-Code ${daten.qr_code} kommt doppelt vor (auch Zeile ${seenQr.get(daten.qr_code)})`);
-            seenQr.set(daten.qr_code, r.nr);
+        if (daten.code) {
+            if (seenCodes.has(daten.code)) fehler.push(`Code ${codeRaw} kommt doppelt vor (auch Zeile ${seenCodes.get(daten.code)})`);
+            seenCodes.set(daten.code, r.nr);
         }
-        // Zuordnung zu vorhandenen Geräten: zuerst über den festen QR-Code, dann Inventarnummer, dann Seriennummer
-        if (daten.qr_code && existingByQr.has(daten.qr_code)) {
-            zielId = existingByQr.get(daten.qr_code);
-        } else if (daten.deviceId) {
-            const key = daten.deviceId.toLowerCase();
-            if (seenDeviceIds.has(key)) fehler.push(`Inventarnummer ${daten.deviceId} kommt doppelt vor (auch Zeile ${seenDeviceIds.get(key)})`);
-            seenDeviceIds.set(key, r.nr);
-            zielId = existingByDeviceId.get(key) || null;
-        } else if (daten.seriennummer && existingBySerial.has(daten.seriennummer.toLowerCase())) {
+        // Zuordnung zu vorhandenen Geräten: zuerst über den Code (auch alte Codes/Nummern), dann Seriennummer
+        if (daten.code && existingByCode.has(daten.code)) {
+            zielId = existingByCode.get(daten.code);
+        } else if (daten.code && !isValidCode(daten.code)) {
+            hinweise.push(`Code „${codeRaw}“ ist unbekannt – es wird ein neuer Code vergeben`);
+            daten.code = null;
+        } else if (daten.code) {
+            hinweise.push(`Code ${codeRaw} wird übernommen`);
+        }
+        if (!zielId && daten.seriennummer && existingBySerial.has(daten.seriennummer.toLowerCase())) {
             zielId = existingBySerial.get(daten.seriennummer.toLowerCase());
             hinweise.push('Über die Seriennummer einem vorhandenen Gerät zugeordnet');
         }

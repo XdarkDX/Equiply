@@ -110,7 +110,7 @@
         <div class="flex flex-col md:flex-row gap-3 mb-4">
             <div class="relative flex-1">
                 <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/></svg>
-                <input id="search" data-input="search" type="search" class="input pl-9 bg-white" placeholder="Suchen: Name, Nummer, Seriennummer, Lagerort, Ausleiher …">
+                <input id="search" data-input="search" type="search" class="input pl-9 bg-white" placeholder="Suchen: Name, Code, Seriennummer, Lagerort, Ausleiher …">
             </div>
             <div class="flex gap-2">
                 <select id="status-filter" data-change="status-filter" class="input bg-white md:w-48">
@@ -158,12 +158,12 @@
             <h2 id="item-title" class="font-extrabold text-xl">Gerät</h2>
             <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
         </div>
-        <input type="hidden" name="id"><input type="hidden" name="qr_code">
+        <input type="hidden" name="id"><input type="hidden" name="code">
         <div id="item-qr-note" hidden class="bg-ozean-leicht text-ozean-tief rounded-xl p-3 text-sm font-medium mb-4"></div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="sm:col-span-2"><label class="label">Bezeichnung *</label><input name="name" class="input" required maxlength="100" placeholder="z. B. 12 L Stahlflasche"></div>
             <div><label class="label">Kategorie</label><select name="kategorie_id" class="input" id="item-kategorie"></select></div>
-            <div id="item-deviceid-field"><label class="label">Inventarnummer</label><input name="deviceId" class="input font-mono" disabled></div>
+            <div id="item-code-field"><label class="label" for="item-code-show">Code</label><input id="item-code-show" class="input font-mono" readonly tabindex="-1"></div>
             <div><label class="label">Hersteller</label><input name="hersteller" class="input" maxlength="100"></div>
             <div><label class="label">Seriennummer</label><input name="seriennummer" class="input" maxlength="100"></div>
             <div><label class="label">Größe / Volumen</label><input name="groesse" class="input" maxlength="50" placeholder="z. B. XL, 12 L, 2 kg"></div>
@@ -245,11 +245,11 @@
             <div class="mt-5 grid md:grid-cols-2 gap-4 text-sm text-slate-600">
                 <div class="bg-slate-50 rounded-xl p-4">
                     <div class="font-bold text-slate-800 mb-1">Eigene Tabelle?</div>
-                    Kein Problem. Wichtig ist nur eine Spalte „Bezeichnung“ (oder „Name“, „Gerät“). Erkannt werden außerdem z. B. Kategorie, Inventarnummer, Hersteller, Seriennummer, Größe, Lagerort, TÜV, Zustand und Notizen.
+                    Kein Problem. Wichtig ist nur eine Spalte „Bezeichnung“ (oder „Name“, „Gerät“). Erkannt werden außerdem z. B. Kategorie, Code, Hersteller, Seriennummer, Größe, Lagerort, TÜV, Zustand und Notizen.
                 </div>
                 <div class="bg-slate-50 rounded-xl p-4">
                     <div class="font-bold text-slate-800 mb-1">Lieber mit Vorlage?</div>
-                    <a href="/api/import/vorlage.xlsx" class="text-ozean-normal font-bold hover:underline">Excel-Vorlage herunterladen</a>, ausfüllen und hier hochladen. Vorhandene Inventarnummern werden aktualisiert statt doppelt angelegt.
+                    <a href="/api/import/vorlage.xlsx" class="text-ozean-normal font-bold hover:underline">Excel-Vorlage herunterladen</a>, ausfüllen und hier hochladen. Geräte mit vorhandenem Code (z. B. FL-7K3X) werden aktualisiert statt doppelt angelegt.
                 </div>
             </div>
         </div>
@@ -348,21 +348,21 @@
         </div>
         <div id="scan-status" class="text-sm text-center font-medium mt-3 min-h-[1.25rem]"></div>
         <form data-form="scan-manual" class="flex gap-2 mt-4 pt-4 border-t border-slate-100">
-            <input name="code" class="input font-mono uppercase placeholder:normal-case" placeholder="Code eintippen, z. B. K7F3X9" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="40" required>
+            <input name="code" class="input font-mono uppercase placeholder:normal-case" placeholder="Code eintippen, z. B. FL-7K3X" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="40" required>
             <button class="btn-dark">Öffnen</button>
         </form>
     </div>
 </div>
 
-<!-- Freien QR-Code zuordnen -->
+<!-- Freien Code verwenden (gescanntes Schild ohne Gerät) -->
 <div id="code-modal" class="overlay" hidden>
     <div class="dialog max-w-md">
-        <h2 class="font-extrabold text-xl mb-1">QR-Code <span id="code-modal-code" class="font-mono"></span></h2>
-        <p class="text-sm text-slate-500 mb-5">Dieser Code ist noch keinem Gerät zugeordnet.</p>
+        <h2 class="font-extrabold text-xl mb-1">Code <span id="code-modal-code" class="font-mono"></span></h2>
+        <p class="text-sm text-slate-500 mb-5">Freier Code der Kategorie „<span id="code-modal-kategorie"></span>“ – noch kein Gerät hat dieses Schild.</p>
         <button data-action="code-new-item" class="btn-primary w-full py-3">Neues Gerät mit diesem Code anlegen</button>
         <div class="mt-6">
-            <label class="label">Oder einem vorhandenen Gerät zuordnen</label>
-            <input data-input="code-assign-search" class="input" placeholder="Gerät suchen: Name oder Nummer">
+            <label class="label">Oder ein vorhandenes Gerät bekommt dieses Schild</label>
+            <input data-input="code-assign-search" class="input" placeholder="Gerät suchen: Name oder Code">
             <div id="code-assign-list" class="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl mt-2"></div>
             <p class="text-xs text-slate-500 mt-2">Der bisherige Code dieses Geräts wird dabei frei.</p>
         </div>
@@ -387,32 +387,28 @@
     <div class="dialog max-w-sm text-center" id="qr-modal-content"></div>
 </div>
 
-<!-- QR-Code einem Gerät zuweisen -->
+<!-- Anderes Schild für ein Gerät verwenden -->
 <div id="qr-assign-modal" class="overlay" hidden>
     <div class="dialog max-w-md">
         <div class="flex justify-between items-start mb-1">
-            <h2 class="font-extrabold text-xl">QR-Code zuweisen</h2>
+            <h2 class="font-extrabold text-xl">Anderes Schild verwenden</h2>
             <button type="button" data-action="close" class="icon-btn" title="Schließen">✕</button>
         </div>
         <p id="qr-assign-item" class="text-sm text-slate-500 mb-5"></p>
 
         <div class="space-y-5">
             <div>
-                <div class="font-bold text-sm mb-2">1. Code aus dem Vorrat nehmen</div>
+                <div class="font-bold text-sm mb-2">Freien Code aus dem Vorrat nehmen</div>
                 <div id="qr-assign-free"></div>
             </div>
             <form data-form="qr-assign-code" class="border-t border-slate-100 pt-5">
-                <div class="font-bold text-sm mb-2">2. Vorhandenes Schild scannen oder Code eintippen</div>
+                <div class="font-bold text-sm mb-2">Oder vorhandenes Schild scannen bzw. Code eintippen</div>
                 <div class="flex gap-2">
-                    <input name="code" class="input font-mono uppercase placeholder:normal-case" required maxlength="40" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="z. B. K7F3X9">
+                    <input name="code" class="input font-mono uppercase placeholder:normal-case" required maxlength="40" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="z. B. FL-7K3X">
                     <button type="button" data-action="scan-for-assign" class="btn-outline">Scannen</button>
                     <button class="btn-dark">OK</button>
                 </div>
             </form>
-            <div class="border-t border-slate-100 pt-5">
-                <div class="font-bold text-sm mb-2">3. Neuen Code erzeugen</div>
-                <button data-action="qr-assign-new" class="btn-outline w-full py-3">Neuen QR-Code erzeugen und zuweisen</button>
-            </div>
         </div>
     </div>
 </div>

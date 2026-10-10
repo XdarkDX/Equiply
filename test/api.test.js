@@ -27,7 +27,9 @@ test('Ersteinrichtung: nur einmal möglich, danach ist die Registrierung zu', as
     const fremd = client(srv.base);
     assert.equal((await fremd.post('/api/setup', { vereinName: 'Hacker', username: 'h', email: 'h@example.de', password: 'geheim123' })).status, 403);
     // Standard-Kategorien wurden angelegt
-    assert.deepEqual((await admin.get('/api/kategorien')).body.map(k => k.name), ['Flaschen', 'Atemregler', 'Jackets', 'Blei', 'Sonstiges']);
+    // Standard-Kategorien mit automatischen Kürzeln
+    assert.deepEqual((await admin.get('/api/kategorien')).body.map(k => `${k.name}:${k.prefix}`),
+        ['Atemregler:AT', 'Blei:BL', 'Flaschen:FL', 'Jackets:JA', 'Sonstiges:SO']);
 });
 
 test('Kein Superadmin mehr', async () => {
@@ -72,32 +74,39 @@ test('Rollen und Mitglieder mit eingeschränkten Rechten', async () => {
     assert.equal((await helfer.post('/api/equipment', { name: 'X', kategorie_id: 1 })).status, 403);
 });
 
-test('Kategorien: eigene anlegen, Kürzel-Konflikte, Löschen nur wenn leer', async () => {
-    const r = await admin.post('/api/kategorien', { name: 'Lampen' });
+test('Kategorien: nur Name eingeben, Kürzel wird automatisch und eindeutig vergeben', async () => {
+    const r = await admin.post('/api/kategorien', { name: 'Lampen', prefix: '99' });
     assert.equal(r.status, 201);
-    assert.equal(r.body.prefix, '6');
+    assert.equal(r.body.prefix, 'LA', 'mitgeschicktes Kürzel wird ignoriert');
     ids.lampen = r.body.id;
-    assert.equal((await admin.post('/api/kategorien', { name: 'Anzüge', prefix: '12' })).status, 409, '12 kollidiert mit 1');
     assert.equal((await admin.post('/api/kategorien', { name: 'lampen' })).status, 409, 'Name doppelt');
-    const anz = await admin.post('/api/kategorien', { name: 'Anzüge', prefix: 'AZ' });
-    assert.equal(anz.status, 201);
-    assert.equal((await admin.del(`/api/kategorien/${anz.body.id}`)).status, 200);
+    const fl = await admin.post('/api/kategorien', { name: 'Flossen' });
+    assert.equal(fl.body.prefix, 'FO', 'FL ist schon vergeben');
+    // Umbenennen ändert das Kürzel nicht
+    assert.equal((await admin.put(`/api/kategorien/${fl.body.id}`, { name: 'Flossen & Masken' })).status, 200);
+    assert.equal((await admin.get('/api/kategorien')).body.find(k => k.id === fl.body.id).prefix, 'FO');
+    assert.equal((await admin.del(`/api/kategorien/${fl.body.id}`)).status, 200);
 });
 
-test('Geräte anlegen mit allen Feldern und fortlaufenden Nummern', async () => {
+test('Geräte: der Code ist die Kennung und beginnt mit dem Kategorie-Kürzel', async () => {
     const kats = (await admin.get('/api/kategorien')).body;
     ids.flaschen = kats.find(k => k.name === 'Flaschen').id;
     const a = await admin.post('/api/equipment', { name: '12L Stahl', kategorie_id: ids.flaschen, tuev: '2030-01-31', hersteller: 'Faber', seriennummer: 'SN-1', groesse: '12 L', lagerort: 'Raum A', notes: 'Rot lackiert' });
     const b = await admin.post('/api/equipment', { name: '10L Alu', kategorie_id: ids.flaschen });
     const c = await admin.post('/api/equipment', { name: 'Taschenlampe', kategorie_id: ids.lampen });
-    assert.deepEqual([a.body.deviceId, b.body.deviceId, c.body.deviceId], ['1001', '1002', '6001']);
+    assert.match(a.body.code, /^FL[0-9A-HJKMNP-TV-Z]{4}$/);
+    assert.match(b.body.code, /^FL[0-9A-HJKMNP-TV-Z]{4}$/);
+    assert.match(c.body.code, /^LA[0-9A-HJKMNP-TV-Z]{4}$/);
+    assert.notEqual(a.body.code, b.body.code);
     ids.flasche = a.body.id;
     ids.lampe = c.body.id;
 
     const item = (await admin.get(`/api/equipment/${ids.flasche}`)).body;
+    assert.equal(item.code, a.body.code);
     assert.equal(item.hersteller, 'Faber');
     assert.equal(item.category, 'Flaschen');
     assert.equal(item.aktivitaeten[0].aktion, 'erstellt');
+    assert.match(item.aktivitaeten[0].details, new RegExp(`FL-${a.body.code.slice(2)}`));
 
     assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: 9999 })).status, 400);
     assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, tuev: '31.02.2030' })).status, 400);
@@ -169,103 +178,64 @@ test('Kommentare: jeder darf schreiben, nur eigene löschen', async () => {
     assert.equal((await admin.post(`/api/equipment/${ids.lampe}/kommentare`, { text: '   ' })).status, 400);
 });
 
-test('QR-Codes: neue Geräte haben keinen Code, Code muss zugewiesen werden', async () => {
-    const neu = async (name, extra = {}) => (await admin.post('/api/equipment', { name, kategorie_id: ids.flaschen, ...extra })).body;
-    const a = await neu('QR-Test A');
-    assert.equal(a.qrCode, null, 'kein automatischer Code');
-    assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.qr_code, null);
-    assert.equal((await admin.get(`/api/equipment/${a.id}/qr.png`)).status, 404);
+test('Kategoriewechsel: neues Kürzel, Zufallsteil bleibt, altes Schild funktioniert weiter', async () => {
+    const x = (await admin.post('/api/equipment', { name: 'Wechsel-Test', kategorie_id: ids.flaschen })).body;
+    const item = (await admin.get(`/api/equipment/${x.id}`)).body;
+    const r = await admin.put(`/api/equipment/${x.id}`, { ...item, kategorie_id: ids.lampen });
+    assert.equal(r.body.codeGeaendert, true);
+    assert.equal(r.body.code, 'LA' + x.code.slice(2), 'gleicher Zufallsteil, neues Kürzel');
+    const moved = (await admin.get(`/api/equipment/${x.id}`)).body;
+    assert.equal(moved.code, r.body.code);
+    assert.match(moved.aktivitaeten[0].details, /Code: FL-.{4} → LA-.{4} \(altes Schild bleibt gültig\)/);
+    // altes Schild (alter Code) öffnet weiterhin das Gerät
+    assert.deepEqual((await admin.get(`/api/qr/${x.code}`)).body, { code: x.code, status: 'zugeordnet', equipment_id: x.id });
+    assert.equal((await admin.get(`/api/qr/${r.body.code}`)).body.equipment_id, x.id);
+    // Umbenennen ohne Kategoriewechsel lässt den Code gleich
+    const r2 = await admin.put(`/api/equipment/${x.id}`, { ...moved, name: 'Wechsel-Test 2' });
+    assert.equal(r2.body.codeGeaendert, false);
+    // Löschen: alter Code verschwindet, aktueller Code wird frei
+    await admin.del(`/api/equipment/${x.id}`);
+    assert.equal((await admin.get(`/api/qr/${x.code}`)).body.status, 'unbekannt');
+    assert.equal((await admin.get(`/api/qr/${r.body.code}`)).body.status, 'frei');
+});
 
-    // Neuen Code zuweisen
-    const r = await admin.put(`/api/equipment/${a.id}/qr`, { neu: true });
+test('Freie Codes: pro Kategorie, Gerät damit anlegen, Schild tauschen', async () => {
+    assert.equal((await admin.post('/api/qr/frei', { anzahl: 2 })).status, 400, 'Kategorie nötig');
+    const vorrat = (await admin.post('/api/qr/frei', { anzahl: 3, kategorie_id: ids.flaschen })).body.codes;
+    assert.ok(vorrat.every(c => c.startsWith('FL')));
+    const frei = (await admin.get('/api/qr/frei')).body;
+    assert.ok(frei.some(f => f.code === vorrat[0] && f.kategorie === 'Flaschen'));
+    assert.deepEqual((await admin.get(`/api/qr/${vorrat[0]}`)).body, { code: vorrat[0], status: 'frei', kategorie_id: ids.flaschen, kategorie: 'Flaschen' });
+
+    // Gerät mit gelasertem Vorrats-Schild anlegen (Eingabe mit Bindestrich und klein)
+    const eingabe = `${vorrat[0].slice(0, 2)}-${vorrat[0].slice(2)}`.toLowerCase();
+    const a = (await admin.post('/api/equipment', { name: 'Mit Schild', kategorie_id: ids.flaschen, code: eingabe })).body;
+    assert.equal(a.code, vorrat[0]);
+    assert.ok(!(await admin.get('/api/qr/frei')).body.some(f => f.code === vorrat[0]), 'Vorrats-Code verbraucht');
+    // Code einer anderen Kategorie passt nicht
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.lampen, code: vorrat[1] })).status, 409);
+    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, code: vorrat[0] })).status, 409, 'schon vergeben');
+
+    // Anderes Schild verwenden: bisheriger Code wird frei
+    const r = await admin.put(`/api/equipment/${a.id}/qr`, { code: vorrat[1] });
     assert.equal(r.status, 200);
-    assert.match(r.body.code, /^[0-9A-Z]{6}$/);
-    assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.qr_code, r.body.code);
-    assert.equal((await helfer.put(`/api/equipment/${a.id}/qr`, { neu: true })).status, 403, 'nur mit Inventar-Recht');
+    assert.equal((await admin.get(`/api/equipment/${a.id}`)).body.code, vorrat[1]);
+    assert.equal((await admin.get(`/api/qr/${vorrat[0]}`)).body.status, 'frei');
+    assert.equal((await admin.put(`/api/equipment/${a.id}/qr`, { code: 'LA' + vorrat[2].slice(2) })).status, 409, 'falsche Kategorie');
+    assert.equal((await admin.del(`/api/qr/frei/${vorrat[2]}`)).status, 200);
+    assert.equal((await admin.del(`/api/qr/frei/${vorrat[1]}`)).status, 404, 'zugeordnete Codes nicht löschbar');
     await admin.del(`/api/equipment/${a.id}`);
 });
 
-test('QR-Codes: Vorrats-Code zuweisen verbraucht ihn, es entsteht kein neuer', async () => {
-    const vorrat = (await admin.post('/api/qr/frei', { anzahl: 3 })).body.codes;
-    const freiVorher = (await admin.get('/api/qr/frei')).body.length;
-    const b = (await admin.post('/api/equipment', { name: 'QR-Test B', kategorie_id: ids.flaschen })).body;
-    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: vorrat[0].toLowerCase() })).status, 200);
-    const freiNachher = (await admin.get('/api/qr/frei')).body;
-    assert.equal(freiNachher.length, freiVorher - 1, 'genau ein freier Code weniger');
-    assert.ok(!freiNachher.some(f => f.code === vorrat[0]));
-
-    // Gerät mit Vorrats-Code direkt anlegen (gescanntes Schild)
-    const c = (await admin.post('/api/equipment', { name: 'QR-Test C', kategorie_id: ids.flaschen, qr_code: vorrat[1] })).body;
-    assert.equal(c.qrCode, vorrat[1]);
-    assert.equal((await admin.get('/api/qr/frei')).body.length, freiVorher - 2);
-
-    // Belegte Codes nicht doppelt
-    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: vorrat[1] })).status, 409);
-    assert.equal((await admin.post('/api/equipment', { name: 'X', kategorie_id: ids.flaschen, qr_code: vorrat[0] })).status, 409);
-    assert.equal((await admin.put(`/api/equipment/${b.id}/qr`, { code: 'xx' })).status, 400);
-
-    // Kategorie wechseln: Nummer neu, Code bleibt
-    const item = (await admin.get(`/api/equipment/${b.id}`)).body;
-    await admin.put(`/api/equipment/${b.id}`, { ...item, kategorie_id: ids.lampen });
-    const moved = (await admin.get(`/api/equipment/${b.id}`)).body;
-    assert.notEqual(moved.deviceId, item.deviceId);
-    assert.equal(moved.qr_code, vorrat[0]);
-
-    // Code lösen -> wieder frei; Gerät löschen -> Code frei
-    assert.equal((await admin.del(`/api/equipment/${b.id}/qr`)).status, 200);
-    assert.equal((await admin.get(`/api/qr/${vorrat[0]}`)).body.status, 'frei');
-    assert.equal((await admin.del(`/api/equipment/${b.id}/qr`)).status, 404);
-    await admin.del(`/api/equipment/${c.id}`);
-    assert.equal((await admin.get(`/api/qr/${vorrat[1]}`)).body.status, 'frei');
-
-    // Unbekannter Code und Verwechslungs-Korrektur O->0, I/L->1
-    assert.equal((await admin.get('/api/qr/ZZZZ99')).body.status, 'unbekannt');
-    assert.equal((await admin.get(`/api/qr/${vorrat[2].replace(/0/g, 'o').replace(/1/g, 'l')}`)).body.code, vorrat[2]);
-    await admin.del(`/api/equipment/${b.id}`);
-});
-
-test('QR-Codes: mehreren Geräten ohne Code auf einmal Codes geben', async () => {
-    const x = (await admin.post('/api/equipment', { name: 'Ohne Code 1', kategorie_id: ids.flaschen })).body;
-    const y = (await admin.post('/api/equipment', { name: 'Ohne Code 2', kategorie_id: ids.flaschen })).body;
-    await admin.put(`/api/equipment/${y.id}/qr`, { neu: true });
-    const codeY = (await admin.get(`/api/equipment/${y.id}`)).body.qr_code;
-    const r = (await admin.post('/api/qr/zuweisen', { ids: [x.id, y.id] })).body;
-    assert.equal(r.zugewiesen, 1, 'nur Geräte ohne Code');
-    assert.match((await admin.get(`/api/equipment/${x.id}`)).body.qr_code, /^[0-9A-Z]{6}$/);
-    assert.equal((await admin.get(`/api/equipment/${y.id}`)).body.qr_code, codeY, 'vorhandener Code bleibt');
-    for (const i of [x, y]) await admin.del(`/api/equipment/${i.id}`);
-});
-
-test('QR-Link /q/CODE und QR-Inhalt mit aktueller Adresse', async () => {
-    const r = await fetch(`${srv.base}/q/ab-c1o9`, { redirect: 'manual' });
+test('QR-Link /q/CODE und QR-Inhalt', async () => {
+    const r = await fetch(`${srv.base}/q/fl-7k3x`, { redirect: 'manual' });
     assert.equal(r.status, 302);
-    assert.equal(r.headers.get('location'), '/#q/ABC109');
-
-    const code = (await admin.put(`/api/equipment/${ids.flasche}/qr`, { neu: true })).body.code;
+    assert.equal(r.headers.get('location'), '/#q/FL7K3X');
+    const code = (await admin.get(`/api/equipment/${ids.flasche}`)).body.code;
     const QR = require('qrcode');
     const svg = await admin.get(`/api/equipment/${ids.flasche}/qr.svg`);
     assert.equal(svg.body.toString(), await QR.toString(`${srv.base}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
-    // Die frühere Einstellung "Adresse für QR-Codes" gibt es nicht mehr
-    await admin.put('/api/verein', { name: 'TC Nord e.V.', qr_url: 'https://woanders.de' });
-    assert.equal((await admin.get(`/api/equipment/${ids.flasche}/qr.svg`)).body.toString(), svg.body.toString());
-    assert.equal((await admin.get('/api/me')).body.verein.qr_url, undefined);
-});
-
-test('Inventarnummern: kleinste freie Nummer wird wiederverwendet, Kategoriewechsel vergibt neue Nummer', async () => {
-    const neu = async (name, kat = ids.flaschen) => (await admin.post('/api/equipment', { name, kategorie_id: kat })).body;
-    const x = await neu('Flasche X');
-    assert.equal(x.deviceId, '1003');
-    const y = await neu('Flasche Y');
-    assert.equal(y.deviceId, '1004');
-    await admin.del(`/api/equipment/${x.id}`);
-    assert.equal((await neu('Flasche Z')).deviceId, '1003', 'Lücke wird wiederverwendet');
-
-    const item = (await admin.get(`/api/equipment/${y.id}`)).body;
-    assert.equal((await admin.put(`/api/equipment/${y.id}`, { ...item, kategorie_id: ids.lampen })).status, 200);
-    const moved = (await admin.get(`/api/equipment/${y.id}`)).body;
-    assert.equal(moved.deviceId, '6002');
-    assert.match(moved.aktivitaeten[0].details, /Inventarnummer: 1004 → 6002/);
-    assert.equal((await neu('Flasche W')).deviceId, '1004', 'alte Nummer ist wieder frei');
+    assert.equal((await admin.get('/api/qr/ZZZZ99')).body.status, 'unbekannt');
 });
 
 test('Admin-Regeln: Ernennen, letzter Admin, neues Passwort meldet ab', async () => {
@@ -363,44 +333,44 @@ test('Vereinslogo und -farbe', async () => {
     assert.equal((await anon.get('/api/branding/logo')).status, 404);
 });
 
-test('QR-Code als PNG-Bild herunterladen', async () => {
-    const kat = (await admin.get('/api/kategorien')).body[0].id;
+test('QR-Code als PNG-Bild herunterladen, mit Code darunter', async () => {
+    const kat0 = (await admin.get('/api/kategorien')).body[0];
+    const kat = kat0.id;
     const item = (await admin.post('/api/equipment', { name: 'Flasche 12L/rot', kategorie_id: kat })).body;
-    item.qrCode = (await admin.put(`/api/equipment/${item.id}/qr`, { neu: true })).body.code;
     const r = await admin.get(`/api/equipment/${item.id}/qr.png?download=1`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'image/png');
+    assert.match(r.headers.get('cache-control'), /no-cache/, 'nach einem Kategoriewechsel sofort das neue Bild');
     assert.ok(r.body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'echtes PNG');
     assert.equal(r.body.readUInt32BE(16), 1000, '1000 px breit');
     assert.ok(r.body.readUInt32BE(20) > 1000, 'höher als breit: Code steht unter dem QR-Code');
     const { PNG } = require('pngjs');
     const img = PNG.sync.read(r.body);
-    assert.equal(require('jsqr')(new Uint8ClampedArray(img.data), img.width, img.height).data, `${srv.base}/q/${item.qrCode}`, 'Bild ist scannbar');
-    assert.match(r.headers.get('content-disposition'), new RegExp(`QR-Code-${item.deviceId}-Flasche-12L-rot\\.png`));
-    const byCode = await admin.get(`/api/qr/${item.qrCode}/png`);
+    assert.equal(require('jsqr')(new Uint8ClampedArray(img.data), img.width, img.height).data, `${srv.base}/q/${item.code}`, 'Bild ist scannbar');
+    assert.match(r.headers.get('content-disposition'), new RegExp(`${kat0.prefix}-${item.code.slice(2)}-Flasche-12L-rot\\.png`));
+    const byCode = await admin.get(`/api/qr/${item.code}/png`);
     assert.deepEqual(byCode.body, r.body, 'gleicher Code, gleiches Bild');
-    assert.equal((await client(srv.base).get(`/api/qr/${item.qrCode}/png`)).status, 401);
+    assert.equal((await client(srv.base).get(`/api/qr/${item.code}/png`)).status, 401);
 });
 
 test('Mehrere QR-Codes als ZIP mit PNG-Bildern', async () => {
     const JSZip = require('jszip');
-    const kat = (await admin.get('/api/kategorien')).body[0].id;
+    const kat0 = (await admin.get('/api/kategorien')).body[0];
+    const kat = kat0.id;
     const a = (await admin.post('/api/equipment', { name: 'ZIP A', kategorie_id: kat })).body;
     const b = (await admin.post('/api/equipment', { name: 'ZIP/B', kategorie_id: kat })).body;
-    const ohne = (await admin.post('/api/equipment', { name: 'Ohne Code', kategorie_id: kat })).body;
-    assert.equal((await admin.get(`/api/qr/bilder.zip?ids=${ohne.id}`)).status, 400, 'Gerät ohne Code');
-    await admin.post('/api/qr/zuweisen', { ids: [a.id, b.id] });
-    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},${ohne.id},99999`);
+    const r = await admin.get(`/api/qr/bilder.zip?ids=${a.id},${b.id},99999`);
     assert.equal(r.status, 200);
     assert.equal(r.headers.get('content-type'), 'application/zip');
     const zip = await JSZip.loadAsync(r.body);
-    assert.deepEqual(Object.keys(zip.files).sort(), [`${a.deviceId} ZIP A.png`, `${b.deviceId} ZIP B.png`].sort());
-    const png = await zip.file(`${a.deviceId} ZIP A.png`).async('nodebuffer');
+    const fmt = (c) => `${c.slice(0, 2)}-${c.slice(2)}`;
+    assert.deepEqual(Object.keys(zip.files).sort(), [`${fmt(a.code)} ZIP A.png`, `${fmt(b.code)} ZIP B.png`].sort());
+    const png = await zip.file(`${fmt(a.code)} ZIP A.png`).async('nodebuffer');
     assert.deepEqual(png, (await admin.get(`/api/equipment/${a.id}/qr.png`)).body);
 
-    const frei = (await admin.post('/api/qr/frei', { anzahl: 2 })).body.codes;
+    const frei = (await admin.post('/api/qr/frei', { anzahl: 2, kategorie_id: kat })).body.codes;
     const z2 = await JSZip.loadAsync((await admin.get(`/api/qr/bilder.zip?codes=${frei.join(',')},FREMD1`)).body);
-    assert.deepEqual(Object.keys(z2.files).sort(), frei.map(c => `QR-Code ${c}.png`).sort());
+    assert.deepEqual(Object.keys(z2.files).sort(), frei.map(c => `${fmt(c)}.png`).sort());
     assert.equal((await admin.get('/api/qr/bilder.zip?ids=')).status, 400);
 });
 

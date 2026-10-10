@@ -1,7 +1,7 @@
 const QRCode = require('qrcode');
 const JSZip = require('jszip');
 const { qrPngWithCode } = require('../qrimage');
-const { HttpError, normalizeCode, isValidCode, requireId } = require('../util');
+const { HttpError, normalizeCode, isValidCode, formatCode, requireId } = require('../util');
 const { requirePermission } = require('../session');
 
 const MAX_FREE_CODES = 210; // 10 Etikettenbögen
@@ -14,15 +14,17 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
 
     // Im QR-Code steht die Adresse, unter der Equiply gerade aufgerufen wird
     const baseUrl = (req) => `${req.protocol}://${req.get('host')}`;
-
-    // PNG in hoher Auflösung (1000 px) – reicht auch zum Lasern und für große Schilder
-    // Bild mit dem Code als Text darunter
-    const pngFor = async (req, code) => qrPngWithCode(`${baseUrl(req)}/q/${code}`, code);
+    // Bild (1000 px breit) mit dem Code als Text darunter
+    const pngFor = async (req, code) => qrPngWithCode(`${baseUrl(req)}/q/${code}`, formatCode(code));
     const fileName = (text) => text.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
 
-    async function sendPng(req, res, code, filename) {
+    // Bilder zu einem Code ändern sich nicht; Bilder zu einem Gerät schon (neuer Code nach Kategoriewechsel)
+    const CACHE_CODE = 'private, max-age=300';
+    const CACHE_ITEM = 'private, no-cache';
+
+    async function sendPng(req, res, code, filename, cache = CACHE_CODE) {
         const png = await pngFor(req, code);
-        res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
+        res.set({ 'Content-Type': 'image/png', 'Cache-Control': cache });
         if (req.query.download) {
             const ascii = filename.replace(/[^A-Za-z0-9_.-]+/g, '-');
             res.set('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
@@ -30,30 +32,40 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         res.send(png);
     }
 
-    async function sendSvg(req, res, code) {
+    async function sendSvg(req, res, code, cache = CACHE_CODE) {
         const svg = await QRCode.toString(`${baseUrl(req)}/q/${code}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
-        res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'private, max-age=300' });
-        if (req.query.download) res.set('Content-Disposition', `attachment; filename="equiply-qr-${code}.svg"`);
-        res.send(svg);
+        res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': cache }).send(svg);
     }
+
+    const ownCode = (req, raw) => {
+        const row = db.prepare(`SELECT code, verein_id FROM qr_codes WHERE code = ?`).get(normalizeCode(raw));
+        if (!row || row.verein_id !== req.user.verein_id) throw new HttpError(404, 'Code nicht gefunden.');
+        return row.code;
+    };
+
+    // Nachschlagen geht auch mit alten Kennungen (z. B. früheren Nummern wie 1001), neu vergeben werden nur gültige Codes
+    const isLookupCode = (code) => isValidCode(code) || /^[0-9A-Z]{2,20}$/.test(code);
 
     // Gescannter Link -> App öffnet das Gerät (Anmeldung wird dort geprüft)
     app.get('/q/:code', (req, res) => {
         const code = normalizeCode(req.params.code);
-        res.redirect(302, isValidCode(code) ? `/#q/${code}` : '/');
+        res.redirect(302, isLookupCode(code) ? `/#q/${code}` : '/');
     });
 
-    // Freie (noch keinem Gerät zugeordnete) Codes – z. B. um Schilder vorab lasern zu lassen
+    // --- Freie Codes (Vorrat), immer für eine bestimmte Kategorie ---
     app.get('/api/qr/frei', ...canManageItems, (req, res) => {
-        res.json(db.prepare(`SELECT code, created_at FROM qr_codes WHERE verein_id = ? AND equipment_id IS NULL ORDER BY created_at DESC, code`).all(req.user.verein_id));
+        res.json(db.prepare(`
+            SELECT q.code, q.created_at, q.kategorie_id, k.name AS kategorie FROM qr_codes q JOIN kategorien k ON k.id = q.kategorie_id
+            WHERE q.verein_id = ? AND q.equipment_id IS NULL ORDER BY k.name COLLATE NOCASE, q.code`).all(req.user.verein_id));
     });
 
     app.post('/api/qr/frei', ...canManageItems, (req, res) => {
         const anzahl = Number(req.body.anzahl);
         if (!Number.isInteger(anzahl) || anzahl < 1 || anzahl > MAX_FREE_CODES) throw new HttpError(400, `Bitte zwischen 1 und ${MAX_FREE_CODES} Codes erzeugen.`);
+        const kategorie = inventory.getCategory(req.user.verein_id, req.body.kategorie_id);
         const codes = db.transaction(() => {
-            const list = Array.from({ length: anzahl }, () => inventory.newCode(req.user.verein_id));
-            log(req.user.verein_id, req.user.id, null, 'qr', `${anzahl} freie QR-Codes erzeugt`);
+            const list = Array.from({ length: anzahl }, () => inventory.newCode(req.user.verein_id, kategorie));
+            log(req.user.verein_id, req.user.id, null, 'qr', `${anzahl} freie Codes für „${kategorie.name}“ erzeugt`);
             return list;
         })();
         res.status(201).json({ codes });
@@ -69,22 +81,18 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
     app.get('/api/qr/bilder.zip', authenticate, async (req, res) => {
         const files = [];
         if (req.query.codes) {
-            const own = db.prepare(`SELECT code FROM qr_codes WHERE code = ? AND verein_id = ?`);
             for (const raw of String(req.query.codes).split(',')) {
-                const code = normalizeCode(raw);
-                if (own.get(code, req.user.verein_id)) files.push({ code, name: `QR-Code ${code}.png` });
+                try { const code = ownCode(req, raw); files.push({ code, name: `${formatCode(code)}.png` }); } catch (e) { /* fremd/unbekannt */ }
             }
         } else {
             const ids = [...new Set(String(req.query.ids || '').split(',').map(Number).filter(n => Number.isInteger(n) && n > 0))];
+            const get = db.prepare(`SELECT device_id, name FROM equipment WHERE id = ? AND verein_id = ?`);
             for (const id of ids) {
-                const item = db.prepare(`SELECT id, device_id, name FROM equipment WHERE id = ? AND verein_id = ?`).get(id, req.user.verein_id);
-                if (!item) continue;
-                const code = inventory.codeOf(item.id);
-                if (!code) continue; // Geräte ohne QR-Code werden übersprungen
-                files.push({ code, name: `${fileName(`${item.device_id} ${item.name}`)}.png` });
+                const item = get.get(id, req.user.verein_id);
+                if (item) files.push({ code: item.device_id, name: `${fileName(`${formatCode(item.device_id)} ${item.name}`)}.png` });
             }
         }
-        if (!files.length) throw new HttpError(400, 'Die ausgewählten Geräte haben noch keinen QR-Code.');
+        if (!files.length) throw new HttpError(400, 'Keine Geräte ausgewählt.');
         if (files.length > MAX_ZIP) throw new HttpError(400, `Maximal ${MAX_ZIP} QR-Codes auf einmal.`);
         const zip = new JSZip();
         const used = new Set();
@@ -98,83 +106,42 @@ module.exports = function qrRoutes(app, { db, sessions, inventory }) {
         res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="QR-Codes.zip"' }).send(buf);
     });
 
-    // Was steckt hinter einem gescannten Code?
+    // Was steckt hinter einem gescannten Code? (aktueller oder alter Code eines Geräts, freier Code, unbekannt)
     app.get('/api/qr/:code', authenticate, (req, res) => {
         const code = normalizeCode(req.params.code);
-        if (!isValidCode(code)) throw new HttpError(400, 'Kein gültiger QR-Code.');
-        const row = db.prepare(`SELECT verein_id, equipment_id FROM qr_codes WHERE code = ?`).get(code);
+        if (!isLookupCode(code)) throw new HttpError(400, 'Kein gültiger Code.');
+        const row = db.prepare(`
+            SELECT q.verein_id, q.equipment_id, q.kategorie_id, k.name AS kategorie FROM qr_codes q
+            LEFT JOIN kategorien k ON k.id = q.kategorie_id WHERE q.code = ?`).get(code);
         if (!row || row.verein_id !== req.user.verein_id) return res.json({ code, status: 'unbekannt' });
-        res.json(row.equipment_id ? { code, status: 'zugeordnet', equipment_id: row.equipment_id } : { code, status: 'frei' });
+        if (row.equipment_id) return res.json({ code, status: 'zugeordnet', equipment_id: row.equipment_id });
+        res.json({ code, status: 'frei', kategorie_id: row.kategorie_id, kategorie: row.kategorie });
     });
 
     app.get('/api/qr/:code/png', authenticate, async (req, res) => {
-        const code = normalizeCode(req.params.code);
-        const row = db.prepare(`SELECT verein_id FROM qr_codes WHERE code = ?`).get(code);
-        if (!row || row.verein_id !== req.user.verein_id) throw new HttpError(404, 'QR-Code nicht gefunden.');
-        await sendPng(req, res, code, `QR-Code ${code}.png`);
+        const code = ownCode(req, req.params.code);
+        await sendPng(req, res, code, `${formatCode(code)}.png`);
     });
 
     app.get('/api/qr/:code/svg', authenticate, async (req, res) => {
-        const code = normalizeCode(req.params.code);
-        const row = db.prepare(`SELECT verein_id FROM qr_codes WHERE code = ?`).get(code);
-        if (!row || row.verein_id !== req.user.verein_id) throw new HttpError(404, 'QR-Code nicht gefunden.');
-        await sendSvg(req, res, code);
+        await sendSvg(req, res, ownCode(req, req.params.code));
     });
 
-    // QR-Code eines Geräts als Bild zum Herunterladen, Dateiname mit Nummer und Name
+    // QR-Code eines Geräts als Bild, Dateiname mit Code und Name
     app.get('/api/equipment/:id/qr.png', authenticate, async (req, res) => {
         const item = inventory.getItem(req.user.verein_id, req.params.id);
-        const code = inventory.codeOf(item.id);
-        if (!code) throw new HttpError(404, 'Dieses Gerät hat noch keinen QR-Code.');
-        await sendPng(req, res, code, `QR-Code ${fileName(`${item.device_id} ${item.name}`)}.png`);
+        await sendPng(req, res, item.device_id, `${fileName(`${formatCode(item.device_id)} ${item.name}`)}.png`, CACHE_ITEM);
     });
 
-    // QR-Code eines Geräts (für Etiketten)
     app.get('/api/equipment/:id/qr.svg', authenticate, async (req, res) => {
         const item = inventory.getItem(req.user.verein_id, req.params.id);
-        const code = inventory.codeOf(item.id);
-        if (!code) throw new HttpError(404, 'Dieses Gerät hat noch keinen QR-Code.');
-        await sendSvg(req, res, code);
+        await sendSvg(req, res, item.device_id, CACHE_ITEM);
     });
 
-    // QR-Code zuweisen: vorhandenen (freien/gescannten) Code ({ code }) oder einen neuen ({ neu: true })
+    // Anderes Schild verwenden: freien Code derselben Kategorie übernehmen, der bisherige wird frei
     app.put('/api/equipment/:id/qr', ...canManageItems, (req, res) => {
         const id = requireId(req.params.id);
-        const result = db.transaction(() => {
-            const item = inventory.getItem(req.user.verein_id, id);
-            const code = req.body.neu ? inventory.newCode(req.user.verein_id) : req.body.code;
-            const r = inventory.assignCode(req.user.verein_id, item.id, code);
-            if (r.code !== r.old) {
-                log(req.user.verein_id, req.user.id, item.id, 'qr', `QR-Code ${r.old ? `${r.old} → ` : ''}${r.code}${r.old ? ` (${r.old} ist jetzt frei)` : ''}`);
-            }
-            return r;
-        })();
-        res.json({ code: result.code, message: 'QR-Code zugewiesen.' });
-    });
-
-    // QR-Code vom Gerät lösen – der Code wird wieder frei
-    app.delete('/api/equipment/:id/qr', ...canManageItems, (req, res) => {
-        const item = inventory.getItem(req.user.verein_id, req.params.id);
-        const code = inventory.releaseCode(item.id);
-        if (!code) throw new HttpError(404, 'Dieses Gerät hat keinen QR-Code.');
-        log(req.user.verein_id, req.user.id, item.id, 'qr', `QR-Code ${code} gelöst (ist jetzt frei)`);
-        res.json({ message: 'QR-Code gelöst.' });
-    });
-
-    // Mehreren Geräten ohne QR-Code auf einmal einen neuen Code geben
-    app.post('/api/qr/zuweisen', ...canManageItems, (req, res) => {
-        const ids = Array.isArray(req.body.ids) ? [...new Set(req.body.ids.map(Number).filter(n => Number.isInteger(n) && n > 0))] : [];
-        const count = db.transaction(() => {
-            let n = 0;
-            for (const id of ids) {
-                const item = db.prepare(`SELECT id FROM equipment WHERE id = ? AND verein_id = ?`).get(id, req.user.verein_id);
-                if (!item || inventory.codeOf(item.id)) continue;
-                const code = inventory.newCode(req.user.verein_id, item.id);
-                log(req.user.verein_id, req.user.id, item.id, 'qr', `QR-Code ${code} zugewiesen`);
-                n++;
-            }
-            return n;
-        })();
-        res.json({ zugewiesen: count, message: `${count} QR-Code${count === 1 ? '' : 's'} zugewiesen.` });
+        const code = db.transaction(() => inventory.replaceCode(req.user.verein_id, req.user.id, inventory.getItem(req.user.verein_id, id), req.body.code))();
+        res.json({ code, message: `Code ${formatCode(code)} übernommen.` });
     });
 };

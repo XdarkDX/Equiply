@@ -27,21 +27,23 @@ test('Migration übernimmt eine equiply.db aus der allerersten Version', () => {
     old.close();
 
     const db = openDatabase(file);
-    assert.equal(db.pragma('user_version', { simple: true }), 6);
-    const codes = db.prepare(`SELECT equipment_id, code FROM qr_codes ORDER BY equipment_id`).all();
-    assert.deepEqual(codes.map(c => c.equipment_id), [1, 2], 'jedes Gerät hat einen festen QR-Code');
-    assert.ok(codes.every(c => /^[0-9A-Z]{6}$/.test(c.code)));
+    assert.equal(db.pragma('user_version', { simple: true }), 7);
+    // Kürzel aus den Kategorienamen
+    assert.deepEqual(db.prepare(`SELECT name, prefix FROM kategorien WHERE verein_id = 7 ORDER BY name`).all().map(k => `${k.name}:${k.prefix}`),
+        ['Atemregler:AT', 'Blei:BL', 'Flaschen:FL', 'Jackets:JA', 'Sonstiges:SO']);
     assert.equal(db.prepare(`SELECT can_manage_items FROM vereins_rollen WHERE id = 3`).get().can_manage_items, 1);
     const user = db.prepare(`SELECT password_hash, token_version FROM nutzer WHERE id = 5`).get();
     assert.ok(bcrypt.compareSync('altpasswort', user.password_hash));
     assert.equal(user.token_version, 0);
 
     assert.equal(db.prepare(`SELECT COUNT(*) c FROM kategorien WHERE verein_id = 7`).get().c, 5);
-    const items = db.prepare(`SELECT e.device_id, e.tuev, e.condition, k.name AS kat FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id ORDER BY e.id`).all();
-    assert.deepEqual(items, [
-        { device_id: '1001', tuev: '2025-05-01', condition: 'Gut', kat: 'Flaschen' },
-        { device_id: '5001', tuev: null, condition: 'Gut', kat: 'Sonstiges' },
-    ]);
+    const items = db.prepare(`SELECT e.id, e.device_id, e.tuev, e.condition, k.name AS kat FROM equipment e JOIN kategorien k ON k.id = e.kategorie_id ORDER BY e.id`).all();
+    assert.match(items[0].device_id, /^FL[0-9A-Z]{4}$/, 'neuer Code mit Kategorie-Kürzel');
+    assert.match(items[1].device_id, /^SO[0-9A-Z]{4}$/);
+    assert.deepEqual(items.map(i => [i.tuev, i.condition, i.kat]), [['2025-05-01', 'Gut', 'Flaschen'], [null, 'Gut', 'Sonstiges']]);
+    // Frühere Nummern und frühere QR-Codes führen weiterhin zum Gerät
+    const alteCodes = db.prepare(`SELECT code FROM qr_codes WHERE equipment_id = 1 ORDER BY code`).all().map(r => r.code);
+    assert.ok(alteCodes.includes("1001") && alteCodes.includes(items[0].device_id) && alteCodes.length === 3, JSON.stringify(alteCodes));
     const loan = db.prepare(`SELECT * FROM ausleihen WHERE equipment_id = 1 AND zurueckgegeben_am IS NULL`).get();
     assert.equal(loan.borrower, 'Carl');
     assert.deepEqual(db.pragma('foreign_key_check'), []);
